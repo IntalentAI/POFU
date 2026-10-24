@@ -1,0 +1,244 @@
+// intalent Joining Assurance — data model.
+// SQLite for local/dev; switch `provider` to "postgresql" for production.
+// String columns are used instead of enums so the schema works on both; allowed
+// values are defined in src/lib/constants.ts.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Organization {
+  id              String   @id @default(cuid())
+  name            String
+  slug            String   @unique
+  timezone        String   @default("UTC")
+  companionName   String   @default("Alex")
+  brandColor      String   @default("#5b3fa0")
+  defaultChannel  String   @default("whatsapp") // whatsapp | email | sms
+  quietHoursStart Int      @default(21) // local hour, messages are not sent from this hour...
+  quietHoursEnd   Int      @default(9) // ...until this hour
+  sendHour        Int      @default(10) // local hour scheduled engagements go out
+  createdAt       DateTime @default(now())
+
+  users      User[]
+  candidates Candidate[]
+  campaigns  Campaign[]
+  concerns   Concern[]
+  knowledge  KnowledgeItem[]
+  apiKeys    ApiKey[]
+  webhooks   Webhook[]
+}
+
+model User {
+  id           String   @id @default(cuid())
+  orgId        String
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         String   @default("recruiter") // admin | recruiter | hiring_manager
+  createdAt    DateTime @default(now())
+
+  org        Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  candidates Candidate[]
+  concerns   Concern[]
+}
+
+model Candidate {
+  id                  String    @id @default(cuid())
+  orgId               String
+  externalId          String? // id in the source ATS / intalent
+  source              String    @default("manual") // manual | csv | api | intalent
+  firstName           String
+  lastName            String    @default("")
+  email               String?
+  phone               String?
+  preferredChannel    String    @default("whatsapp")
+  language            String    @default("en")
+  position            String
+  department          String?
+  location            String?
+  hiringManagerName   String?
+  hiringManagerEmail  String?
+  recruiterId         String?
+  campaignId          String?
+  offerAcceptedAt     DateTime
+  joiningDate         DateTime
+  originalJoiningDate DateTime
+  status              String    @default("pre_joining") // pre_joining | joined | dropped | offer_rescinded
+  readiness           String    @default("on_track") // on_track | needs_attention | intervention_required
+  readinessReasons    String    @default("[]") // JSON array of {tone, text}
+  dropoutReason       String?
+  engagementPaused    Boolean   @default(false)
+  optedOut            Boolean   @default(false)
+  lastConfirmedAt     DateTime?
+  lastInboundAt       DateTime?
+  lastOutboundAt      DateTime?
+  joinedAt            DateTime?
+  portalToken         String    @unique @default(cuid())
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  org       Organization       @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  recruiter User?              @relation(fields: [recruiterId], references: [id], onDelete: SetNull)
+  campaign  Campaign?          @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  messages  Message[]
+  scheduled ScheduledMessage[]
+  concerns  Concern[]
+  events    Event[]
+
+  @@unique([orgId, externalId])
+  @@index([orgId, status, joiningDate])
+}
+
+// A configurable follow-up schedule ("campaign template").
+model Campaign {
+  id          String   @id @default(cuid())
+  orgId       String
+  name        String
+  description String?
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  org        Organization   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  steps      CampaignStep[]
+  candidates Candidate[]
+}
+
+model CampaignStep {
+  id         String  @id @default(cuid())
+  campaignId String
+  key        String // stable identifier, e.g. "welcome", "pulse_mid"
+  name       String
+  objective  String?
+  // anchor decides how the send date is computed:
+  //   after_acceptance: offerAcceptedAt + offset days
+  //   notice_percent:   offerAcceptedAt + offset% of (joiningDate - offerAcceptedAt)
+  //   before_joining:   joiningDate - offset days (0 = Day 1)
+  anchor     String
+  offset     Int
+  kind       String  @default("message") // message | pulse (joining-date confirmation)
+  optional   Boolean @default(false) // skipped for candidates who are clearly on track
+  subject    String?
+  body       String
+  position   Int     @default(0)
+
+  campaign  Campaign           @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  scheduled ScheduledMessage[]
+}
+
+model ScheduledMessage {
+  id           String    @id @default(cuid())
+  candidateId  String
+  stepId       String?
+  stepKey      String
+  kind         String
+  scheduledFor DateTime
+  status       String    @default("scheduled") // scheduled | sent | skipped | cancelled | failed
+  statusReason String?
+  sentAt       DateTime?
+  messageId    String?
+  createdAt    DateTime  @default(now())
+
+  candidate Candidate     @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  step      CampaignStep? @relation(fields: [stepId], references: [id], onDelete: SetNull)
+
+  @@index([status, scheduledFor])
+}
+
+model Message {
+  id          String   @id @default(cuid())
+  candidateId String
+  direction   String // inbound | outbound
+  channel     String // whatsapp | email | sms | web
+  author      String // candidate | ai | recruiter | system
+  authorName  String?
+  subject     String?
+  body        String
+  delivery    String   @default("sent") // sent | simulated | failed | received
+  externalId  String?
+  analysis    String? // JSON: AI interpretation of inbound messages
+  createdAt   DateTime @default(now())
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@index([candidateId, createdAt])
+}
+
+// A candidate concern that needs a human ("recruiter alert").
+model Concern {
+  id              String    @id @default(cuid())
+  orgId           String
+  candidateId     String
+  category        String // see CONCERN_CATEGORIES
+  severity        String    @default("medium") // low | medium | high
+  summary         String
+  suggestedAction String
+  owner           String    @default("recruiter") // recruiter | hr_ops | hiring_manager
+  requestedDate   DateTime?
+  status          String    @default("open") // open | resolved
+  assigneeId      String?
+  sourceMessageId String?
+  resolution      String?
+  createdAt       DateTime  @default(now())
+  resolvedAt      DateTime?
+
+  org       Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  candidate Candidate    @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  assignee  User?        @relation(fields: [assigneeId], references: [id], onDelete: SetNull)
+
+  @@index([orgId, status])
+}
+
+// Audit trail / journey timeline.
+model Event {
+  id          String   @id @default(cuid())
+  candidateId String
+  type        String
+  detail      String
+  actor       String   @default("system")
+  createdAt   DateTime @default(now())
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@index([candidateId, createdAt])
+}
+
+// Employer-approved answers the AI companion may use.
+model KnowledgeItem {
+  id        String   @id @default(cuid())
+  orgId     String
+  question  String
+  answer    String
+  createdAt DateTime @default(now())
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+}
+
+model ApiKey {
+  id         String    @id @default(cuid())
+  orgId      String
+  name       String
+  prefix     String
+  keyHash    String    @unique
+  lastUsedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+}
+
+model Webhook {
+  id        String   @id @default(cuid())
+  orgId     String
+  url       String
+  secret    String
+  events    String   @default("*") // comma-separated event names or *
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+}

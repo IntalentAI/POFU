@@ -1,26 +1,31 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+@theme {
+  --color-brand-50: #f5f2fb;
+  --color-brand-100: #ebe4f7;
+  --color-brand-200: #d6c8ef;
+  --color-brand-500: #6d4fb8;
+  --color-brand-600: #5b3fa0;
+  --color-brand-700: #4a3283;
+  --color-brand-900: #2a1d4d;
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: #f7f7fa;
+  color: #1c1b22;
 }
+
+@utility card { @apply rounded-xl border border-zinc-200 bg-white shadow-[0_1px_2px_rgba(0,0,0,0.04)]; }
+@utility btn { @apply inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition disabled:opacity-50 disabled:cursor-not-allowed; }
+@utility btn-primary { @apply btn bg-brand-600 text-white hover:bg-brand-700; }
+@utility btn-secondary { @apply btn border border-zinc-300 bg-white text-zinc-800 hover:bg-zinc-50; }
+@utility btn-ghost { @apply btn text-zinc-600 hover:bg-zinc-100; }
+@utility btn-danger { @apply btn border border-red-200 bg-white text-red-700 hover:bg-red-50; }
+@utility input { @apply w-full rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100; }
+@utility label { @apply mb-1 block text-xs font-medium text-zinc-600; }
+@utility h1 { @apply text-xl font-semibold tracking-tight text-zinc-900; }
+@utility h2 { @apply text-sm font-semibold text-zinc-900; }
+@utility muted { @apply text-sm text-zinc-500; }
+@utility table-head { @apply px-4 py-2 text-left text-xs font-medium uppercase tracking-wide text-zinc-500; }
+@utility table-cell { @apply px-4 py-3 text-sm; }
