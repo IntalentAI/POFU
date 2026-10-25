@@ -23,12 +23,22 @@ export async function createDefaultCampaign(orgId: string) {
   });
 }
 
+function validTimeZone(tz: string | undefined) {
+  if (!tz) return "UTC";
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return tz;
+  } catch {
+    return "UTC";
+  }
+}
+
 /** Self-serve signup (product-led growth): a new workspace with sensible defaults. */
-export async function createWorkspace(input: { company: string; name: string; email: string; password: string }) {
+export async function createWorkspace(input: { company: string; name: string; email: string; password: string; timezone?: string }) {
   const base = input.company.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "workspace";
   let slug = base;
   for (let i = 2; await db.organization.findUnique({ where: { slug } }); i++) slug = `${base}-${i}`;
-  const org = await db.organization.create({ data: { name: input.company, slug } });
+  const org = await db.organization.create({ data: { name: input.company, slug, timezone: validTimeZone(input.timezone) } });
   await createDefaultCampaign(org.id);
   await db.knowledgeItem.createMany({ data: DEFAULT_KNOWLEDGE.map((k) => ({ ...k, orgId: org.id })) });
   return db.user.create({

@@ -15,6 +15,7 @@ export async function evaluateReadiness(candidateId: string, now = new Date()) {
   const c = await db.candidate.findUniqueOrThrow({
     where: { id: candidateId },
     include: {
+      org: { select: { timezone: true } },
       concerns: { where: { status: "open" }, orderBy: { createdAt: "desc" } },
       scheduled: { where: { status: "sent", kind: { in: ["pulse", "message"] }, stepKey: { not: "welcome" } }, orderBy: { sentAt: "desc" }, take: 3 },
     },
@@ -49,7 +50,7 @@ export async function evaluateReadiness(candidateId: string, now = new Date()) {
     reasons.push({ tone: "warning", text: `No reply to the last ${unanswered.length} check-ins` });
     raise("needs_attention");
   } else if (c.lastInboundAt) {
-    reasons.push({ tone: "info", text: `Last replied ${fmtDate(c.lastInboundAt, { year: undefined })}` });
+    reasons.push({ tone: "info", text: `Last replied ${fmtDate(c.lastInboundAt, { year: undefined, timeZone: c.org.timezone })}` });
   }
 
   if (daysBetween(c.originalJoiningDate, c.joiningDate) !== 0) {

@@ -24,7 +24,7 @@ export async function signup(_: AuthState, form: FormData): Promise<AuthState> {
   if (!company || !name || !email) return { error: "Please fill in every field." };
   if (password.length < 8) return { error: "Password must be at least 8 characters." };
   if (await db.user.findUnique({ where: { email } })) return { error: "An account with this email already exists." };
-  const user = await createWorkspace({ company, name, email, password });
+  const user = await createWorkspace({ company, name, email, password, timezone: String(form.get("timezone") || "") });
   await createSession(user.id);
   redirect("/dashboard?welcome=1");
 }

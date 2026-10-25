@@ -10,8 +10,8 @@ const INTENT_LABEL: Record<string, string> = {
 };
 const CHANNEL: Record<string, string> = { whatsapp: "WhatsApp", email: "Email", sms: "SMS", web: "Joining page" };
 
-export function Conversation({ messages, candidateName, sendAction, simulateAction }: {
-  messages: Msg[]; candidateName: string;
+export function Conversation({ messages, candidateName, timeZone, sendAction, simulateAction }: {
+  messages: Msg[]; candidateName: string; timeZone: string;
   sendAction: (f: FormData) => Promise<void>; simulateAction: (f: FormData) => Promise<void>;
 }) {
   const [mode, setMode] = useState<"recruiter" | "simulate">("recruiter");
@@ -40,7 +40,7 @@ export function Conversation({ messages, candidateName, sendAction, simulateActi
                 </div>
                 <div className={`mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-400 ${inbound ? "" : "justify-end"}`}>
                   <span>{who}</span>·<span>{CHANNEL[m.channel] ?? m.channel}</span>·
-                  <span>{new Date(m.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
+                  <span>{new Date(m.createdAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone })}</span>
                   {m.delivery === "simulated" && <span className="rounded bg-zinc-200 px-1 text-zinc-600">simulated</span>}
                   {m.delivery === "failed" && <span className="rounded bg-red-100 px-1 text-red-700">failed{analysis?.error ? `: ${analysis.error}` : ""}</span>}
                 </div>

@@ -37,6 +37,11 @@ export function atLocalHour(day: Date, hour: number, timeZone: string) {
   return new Date(naive - offset);
 }
 
+/** e.g. "9:00 AM" for hour 9. */
+export function fmtHour(hour: number) {
+  return `${hour % 12 || 12}:00 ${hour < 12 ? "AM" : "PM"}`;
+}
+
 export function isQuietHour(d: Date, timeZone: string, start: number, end: number) {
   const h = hourInZone(d, timeZone);
   return start > end ? h >= start || h < end : h >= start && h < end;
@@ -47,9 +52,10 @@ export function fmtDate(d: Date | string | null | undefined, opts: Intl.DateTime
   return new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC", ...opts });
 }
 
-export function fmtDateTime(d: Date | string | null | undefined) {
+/** A moment in time, shown in the workspace's time zone (the server runs in UTC). */
+export function fmtDateTime(d: Date | string | null | undefined, timeZone = "UTC") {
   if (!d) return "—";
-  return new Date(d).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+  return new Date(d).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone });
 }
 
 export function relative(d: Date | string, now = new Date()) {

@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { CONCERN_CATEGORIES, DROPOUT_REASONS, OWNER_LABEL, type ConcernCategory } from "@/lib/constants";
-import { daysBetween, fmtDate, fmtDateTime, toDateInput } from "@/lib/dates";
+import { daysBetween, fmtDate, fmtDateTime, fmtHour, isQuietHour, toDateInput } from "@/lib/dates";
 import { parseReasons } from "@/lib/engine/readiness";
 import { portalUrl } from "@/lib/engine/template";
 import { recommendAction } from "@/lib/recommend";
@@ -48,6 +48,15 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
   const active = c.status === "pre_joining";
   const sentKeys = new Set(c.scheduled.filter((s) => s.status === "sent").map((s) => s.stepKey));
   const stageDone = (i: number) => i === 0 || (i === 5 ? c.status === "joined" : STAGES[i].keys.some((k) => sentKeys.has(k)));
+  const tz = user.org.timezone;
+  const quietNow = isQuietHour(now, tz, user.org.quietHoursStart, user.org.quietHoursEnd);
+  // Why a due engagement hasn't gone out yet (the scheduler runs every 5 minutes).
+  const pendingNote = (s: { status: string; scheduledFor: Date }) => {
+    if (s.status !== "scheduled" || s.scheduledFor > now) return null;
+    if (c.engagementPaused) return "Held: engagement is paused";
+    if (quietNow) return `Held for quiet hours: sends after ${fmtHour(user.org.quietHoursEnd)}`;
+    return "Due: sends within 5 minutes";
+  };
   const commitment = c.events.filter((e) => ["confirmed", "concern_raised", "concern_resolved", "joining_date_changed", "status_changed"].includes(e.type));
 
   return (
@@ -112,6 +121,7 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
           <Conversation
             messages={c.messages.map((m) => ({ id: m.id, direction: m.direction, author: m.author, authorName: m.authorName, channel: m.channel, body: m.body, delivery: m.delivery, analysis: m.analysis, createdAt: m.createdAt.toISOString() }))}
             candidateName={c.firstName}
+            timeZone={tz}
             sendAction={sendRecruiterMessage.bind(null, c.id)}
             simulateAction={simulateCandidateReply.bind(null, c.id)}
           />
@@ -127,8 +137,9 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
                   <span className={`w-20 shrink-0 text-xs font-medium ${s.status === "sent" ? "text-emerald-600" : s.status === "scheduled" ? "text-brand-600" : s.status === "failed" ? "text-red-600" : "text-zinc-400"}`}>{s.status}</span>
                   <span className="flex-1">{s.step?.name ?? s.stepKey}{s.kind !== "message" && <span className="ml-2 rounded bg-brand-50 px-1.5 text-[11px] text-brand-700">{s.kind === "pulse" ? "commitment pulse" : "arrival check"}</span>}
                     {s.statusReason && s.status !== "sent" && <div className="text-xs text-zinc-400">{s.statusReason}</div>}
+                    {pendingNote(s) && <div className="text-xs text-amber-700">{pendingNote(s)}</div>}
                   </span>
-                  <span className="whitespace-nowrap text-xs text-zinc-500">{fmtDateTime(s.sentAt ?? s.scheduledFor)}</span>
+                  <span className="whitespace-nowrap text-xs text-zinc-500">{fmtDateTime(s.sentAt ?? s.scheduledFor, tz)}</span>
                 </li>
               ))}
             </ul>
@@ -154,7 +165,7 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
                   <div key={k.id} className={`rounded-lg border p-3 ${k.severity === "high" ? "border-red-200 bg-red-50/40" : "border-amber-200 bg-amber-50/40"}`}>
                     <div className="flex items-center justify-between text-xs">
                       <span className="font-semibold uppercase tracking-wide text-zinc-700">{meta.label}</span>
-                      <span className="text-zinc-500">{fmtDate(k.createdAt, { year: undefined })} · {OWNER_LABEL[k.owner]}</span>
+                      <span className="text-zinc-500">{fmtDate(k.createdAt, { year: undefined, timeZone: tz })} · {OWNER_LABEL[k.owner]}</span>
                     </div>
                     <p className="mt-1 text-sm">{k.summary}</p>
                     <p className="mt-1 text-xs text-zinc-600">→ {k.suggestedAction}</p>
@@ -210,7 +221,7 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
                 <tbody>
                   {commitment.map((e) => (
                     <tr key={e.id} className="align-top">
-                      <td className="whitespace-nowrap py-1 pr-3 text-xs text-zinc-500">{fmtDate(e.createdAt, { year: undefined })}</td>
+                      <td className="whitespace-nowrap py-1 pr-3 text-xs text-zinc-500">{fmtDate(e.createdAt, { year: undefined, timeZone: tz })}</td>
                       <td className="py-1">{e.detail}</td>
                     </tr>
                   ))}
@@ -245,7 +256,7 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
               {c.events.map((e) => (
                 <li key={e.id} className="flex gap-2 text-xs">
                   <Avatar name={e.actor === "ai" ? "A I" : e.actor} size={18} />
-                  <div><span className="text-zinc-700">{e.detail}</span><div className="text-zinc-400">{fmtDateTime(e.createdAt)} · {e.actor}</div></div>
+                  <div><span className="text-zinc-700">{e.detail}</span><div className="text-zinc-400">{fmtDateTime(e.createdAt, tz)} · {e.actor}</div></div>
                 </li>
               ))}
             </ul>

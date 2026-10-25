@@ -37,7 +37,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
     <div>
       <PageHeader
         title="Offer-to-Join Command Center"
-        subtitle={`${fmtDate(now, { weekday: "long", month: "long", day: "numeric" })} · Who is joining, who has confirmed, and who needs you.`}
+        subtitle={`${fmtDate(now, { weekday: "long", month: "long", day: "numeric", timeZone: user.org.timezone })} · Who is joining, who has confirmed, and who needs you.`}
         actions={<Link href="/candidates/new" className="btn-primary">+ Add accepted offer</Link>}
       />
 
@@ -132,7 +132,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
                   <li key={e.id} className="text-sm">
                     <Link href={`/candidates/${e.candidate.id}`} className="font-medium hover:underline">{e.candidate.firstName} {e.candidate.lastName}</Link>
                     <span className="text-zinc-600"> — {e.detail}</span>
-                    <div className="text-xs text-zinc-400">{fmtDateTime(e.createdAt)}</div>
+                    <div className="text-xs text-zinc-400">{fmtDateTime(e.createdAt, user.org.timezone)}</div>
                   </li>
                 ))}
               </ul>
