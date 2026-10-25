@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { jwtVerify } from "jose";
+import { authSecret } from "@/lib/secret";
 
 const PUBLIC = [/^\/$/, /^\/login/, /^\/signup/, /^\/j\//, /^\/api\//, /^\/_next\//, /^\/favicon/];
 
@@ -9,7 +10,7 @@ export async function middleware(req: NextRequest) {
   const token = req.cookies.get("ja_session")?.value;
   if (token) {
     try {
-      await jwtVerify(token, new TextEncoder().encode(process.env.AUTH_SECRET || "dev-only-change-me-please-32-chars-min"));
+      await jwtVerify(token, authSecret());
       return NextResponse.next();
     } catch {}
   }

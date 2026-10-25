@@ -31,7 +31,7 @@ This repository implements the **MVP** from the product brief (§13):
 ```bash
 npm install
 cp .env.example .env        # defaults work for local development
-npm run setup               # create the SQLite DB and seed the demo workspace
+npm run setup               # apply migrations and seed the demo workspace
 npm run dev                 # http://localhost:3000
 ```
 
@@ -46,7 +46,9 @@ Without channel credentials, outbound messages are recorded as **simulated**, so
 
 | Variable | Purpose |
 |---|---|
-| `DATABASE_URL` | SQLite by default. For production, set `provider = "postgresql"` in `prisma/schema.prisma` and use a Postgres URL. |
+| `DATABASE_URL` | SQLite file. In the container this is `file:/data/app.db`. |
+| `LITESTREAM_REPLICA_URL` | Where Litestream continuously backs up the SQLite DB, e.g. `gcs://bucket/app.db` (set by the deploy workflow). |
+| `SEED_DEMO` | `true` loads the Acme demo workspace when the container starts with a brand-new database. |
 | `AUTH_SECRET` | Session signing secret (32+ characters). **Required in production.** |
 | `APP_URL` | Public base URL, used for candidate links and Twilio signature validation. |
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` | Turns on the Claude-powered companion (default model `claude-opus-5-5`, low effort, server-side refusal fallback). Without a key, the rules engine is used. |
@@ -60,6 +62,35 @@ Without channel credentials, outbound messages are recorded as **simulated**, so
 **Inbound webhooks:** `/api/webhooks/whatsapp` (Meta), `/api/webhooks/twilio` (WhatsApp and SMS), `/api/webhooks/email` (SendGrid, Postmark or Mailgun inbound, JSON or form data).
 
 > WhatsApp note: outside Meta's 24-hour service window, business-initiated messages must use pre-approved templates. Register your journey messages as templates before going live.
+
+## Deploying to Google Cloud Run
+
+Every push to `main` runs the tests, builds the Docker image and deploys it to Cloud Run (`.github/workflows/deploy.yml`). Pull requests run the tests only.
+
+**How SQLite survives on Cloud Run.** A Cloud Run container's disk is wiped on every restart and deploy. [Litestream](https://litestream.io) streams every database change to a Cloud Storage bucket about once a second. When a new container starts, `deploy/entrypoint.sh` restores the database from that bucket, applies migrations, and starts the app. Because of this, the service runs as **exactly one always-on instance** (`--min-instances 1 --max-instances 1 --no-cpu-throttling`). Two instances would each hold their own copy of the database. At MVP scale, one instance is plenty.
+
+**Scheduled engagements** are triggered by Cloud Scheduler (`/api/cron/tick` every 5 minutes, plus an hourly readiness sweep), which the workflow creates. The in-process scheduler is turned off in production so a deploy can't send a message twice.
+
+### One-time setup
+1. In [Google Cloud Shell](https://shell.cloud.google.com), clone this repo and run:
+   ```bash
+   PROJECT_ID=your-project-id ./deploy/setup-gcp.sh
+   ```
+   This enables the APIs and creates the Artifact Registry repo, the backup bucket, the service accounts, the secrets (`pofu-auth-secret`, `pofu-cron-secret`) and GitHub Workload Identity Federation, so no keys are stored in GitHub.
+2. Add the variables the script prints under GitHub → Settings → Secrets and variables → Actions → **Variables**. If the `gh` CLI is logged in, the script can set them for you. Set `SEED_DEMO=true` if you want the demo workspace on the first deploy.
+3. Push to `main` or re-run the workflow. The deployed URL appears in the workflow summary.
+
+### Optional settings (GitHub variables)
+- `EXTRA_SECRETS`: Secret Manager secrets to mount as env vars, for example `ANTHROPIC_API_KEY=pofu-anthropic-key:latest,SMTP_URL=pofu-smtp-url:latest`. Create each secret first and grant `pofu-runtime@…` the Secret Accessor role on it.
+- `EXTRA_ENV_VARS`: plain env vars, for example `EMAIL_FROM=Acme Joining <joining@acme.com>,TWILIO_WHATSAPP_FROM=whatsapp:+1…`.
+- `APP_URL`: set this once you map a custom domain.
+- `GCP_REGION` (default `us-central1`) and `CLOUD_RUN_SERVICE` (default `pofu`).
+
+### Things to know
+- **Deploys:** for a few seconds during a rollout the old and new versions run together. A write that lands on the old version in that window can be lost, so deploy at quiet times.
+- **Cost:** roughly the price of one always-on 1 vCPU / 1 GiB Cloud Run instance, plus negligible storage.
+- **Scaling up:** when you need more than one instance, move to Cloud SQL (Postgres). Prisma makes that a schema-provider change plus a fresh migration.
+- **Backups:** Litestream keeps 7 days of point-in-time history in the bucket. Restore locally with `litestream restore -o app.db gcs://BUCKET/app.db`.
 
 ## Integration API
 

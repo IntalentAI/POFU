@@ -1,0 +1,8 @@
+# Continuously replicates the SQLite database to object storage (Cloud Storage on Cloud Run).
+dbs:
+  - path: ${DB_PATH}
+    replicas:
+      - url: ${LITESTREAM_REPLICA_URL}
+        sync-interval: 1s
+        snapshot-interval: 6h
+        retention: 168h

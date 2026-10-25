@@ -2,9 +2,9 @@ import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { db } from "./db";
+import { authSecret as secret } from "./secret";
 
 const COOKIE = "ja_session";
-const secret = () => new TextEncoder().encode(process.env.AUTH_SECRET || "dev-only-change-me-please-32-chars-min");
 
 export async function createSession(userId: string) {
   const token = await new SignJWT({ sub: userId })
