@@ -1,0 +1,23 @@
+# Checks every push and pull request. Deployment is handled by Cloudflare Workers Builds
+# (connected to this repo in the Cloudflare dashboard), not by GitHub Actions.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test

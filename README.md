@@ -9,7 +9,7 @@ This repository implements the **MVP** from the product brief (§13):
 | MVP capability | Where |
 |---|---|
 | Offer-to-join candidate tracking | Candidates list and detail pages, CSV import, `POST /api/v1/candidates` |
-| Automated WhatsApp/email engagement | `src/lib/channels` (Meta WhatsApp Cloud API, Twilio WhatsApp/SMS, SMTP), `src/lib/engine/dispatcher.ts` |
+| Automated WhatsApp/email engagement | `src/lib/channels` (Meta WhatsApp Cloud API, Twilio WhatsApp/SMS, Resend email), `src/lib/engine/dispatcher.ts` |
 | Configurable follow-up schedules | Engagement Journeys (editable steps); adapts to the notice period (`src/lib/engine/schedule.ts`) |
 | Two-way candidate conversations | Inbound webhooks plus the candidate joining page `/j/:token`; recruiters can reply from the candidate page |
 | Joining-date confirmation | Commitment pulse checks with quick replies, Day-1 arrival check, commitment timeline |
@@ -30,9 +30,9 @@ This repository implements the **MVP** from the product brief (§13):
 
 ```bash
 npm install
-cp .env.example .env        # defaults work for local development
-npm run setup               # apply migrations and seed the demo workspace
-npm run dev                 # http://localhost:3000
+cp .dev.vars.example .dev.vars   # local secrets; defaults work for development
+npm run setup                    # create the local D1 database and load the demo workspace
+npm run dev                      # http://localhost:3000
 ```
 
 Sign in with **demo@acme.test / demo1234**, or create a new workspace at `/signup`.
@@ -42,55 +42,65 @@ Without channel credentials, outbound messages are recorded as **simulated**, so
 - Use **Open candidate view** to see the candidate's mobile joining page and chat as them.
 - **Run scheduler now** (top bar) processes any engagements that are due.
 
-## Configuration (`.env`)
+`npm run preview` builds the app and runs it on Cloudflare's local Workers runtime (`http://localhost:8787`), which is closer to production than `npm run dev`.
 
-| Variable | Purpose |
+## Configuration
+
+The app runs on **Cloudflare Workers** with a **D1** (SQLite) database bound as `DB` (see `wrangler.jsonc`). Set values locally in `.dev.vars`; in production use `npx wrangler secret put NAME` or the Cloudflare dashboard (Worker → Settings → Variables and Secrets). No redeploy is needed after changing a secret.
+
+| Name | Purpose |
 |---|---|
-| `DATABASE_URL` | SQLite file. In the container this is `file:/data/app.db`. |
-| `LITESTREAM_REPLICA_URL` | Where Litestream continuously backs up the SQLite DB, e.g. `gcs://bucket/app.db` (set by the deploy workflow). |
-| `SEED_DEMO` | `true` loads the Acme demo workspace when the container starts with a brand-new database. |
-| `AUTH_SECRET` | Session signing secret (32+ characters). **Required in production.** |
-| `APP_URL` | Public base URL, used for candidate links and Twilio signature validation. |
+| `AUTH_SECRET` | Session signing secret (32+ characters). **Required.** |
+| `APP_URL` | Public base URL, used for candidate links and Twilio signature validation. **Required.** |
 | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` | Turns on the Claude-powered companion (default model `claude-opus-5-5`, low effort, server-side refusal fallback). Without a key, the rules engine is used. |
-| `SMTP_URL`, `EMAIL_FROM` | Outbound email. |
+| `RESEND_API_KEY`, `EMAIL_FROM` | Outbound email via [Resend](https://resend.com). `EMAIL_FROM` must use a domain verified in Resend. |
+| `INBOUND_EMAIL_SECRET` | Shared secret for the inbound email webhook (`?secret=`). |
 | `WHATSAPP_CLOUD_TOKEN`, `WHATSAPP_CLOUD_PHONE_ID`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET` | Meta WhatsApp Cloud API. |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_FROM`, `TWILIO_SMS_FROM` | Twilio WhatsApp / SMS. |
-| `INBOUND_EMAIL_SECRET` | Shared secret for the inbound email webhook (`?secret=`). |
-| `ENABLE_INTERNAL_SCHEDULER` | `true` runs the scheduler every minute inside the server process (single instance). |
-| `CRON_SECRET` | Protects `/api/cron/tick` for external schedulers (serverless or multi-instance). |
+| `CRON_SECRET` | Optional. Only needed to call `/api/cron/tick` from outside; Cron Triggers call it in-process. |
 
-**Inbound webhooks:** `/api/webhooks/whatsapp` (Meta), `/api/webhooks/twilio` (WhatsApp and SMS), `/api/webhooks/email` (SendGrid, Postmark or Mailgun inbound, JSON or form data).
+**Inbound webhooks:** `/api/webhooks/whatsapp` (Meta), `/api/webhooks/twilio` (WhatsApp and SMS), `/api/webhooks/email` (Resend, SendGrid, Postmark or Mailgun inbound; JSON or form data).
 
 > WhatsApp note: outside Meta's 24-hour service window, business-initiated messages must use pre-approved templates. Register your journey messages as templates before going live.
 
-## Deploying to Google Cloud Run
+**Scheduled engagements** run on Cloudflare **Cron Triggers** (`wrangler.jsonc`): every 5 minutes for due messages, plus an hourly readiness sweep. `worker.ts` handles them by calling `/api/cron/tick` inside the Worker.
 
-Every push to `main` runs the tests, builds the Docker image and deploys it to Cloud Run (`.github/workflows/deploy.yml`). Pull requests run the tests only.
+## Deploying to Cloudflare
 
-**How SQLite survives on Cloud Run.** A Cloud Run container's disk is wiped on every restart and deploy. [Litestream](https://litestream.io) streams every database change to a Cloud Storage bucket about once a second. When a new container starts, `deploy/entrypoint.sh` restores the database from that bucket, applies migrations, and starts the app. Because of this, the service runs as **exactly one always-on instance** (`--min-instances 1 --max-instances 1 --no-cpu-throttling`). Two instances would each hold their own copy of the database. At MVP scale, one instance is plenty.
+Deployment uses **Cloudflare Workers Builds**: Cloudflare builds and deploys every push to `main`, and other branches get preview URLs. GitHub Actions (`.github/workflows/ci.yml`) only runs the checks.
 
-**Scheduled engagements** are triggered by Cloud Scheduler (`/api/cron/tick` every 5 minutes, plus an hourly readiness sweep), which the workflow creates. The in-process scheduler is turned off in production so a deploy can't send a message twice.
+Requires the **Workers Paid** plan ($5/month); the free plan's 10 ms CPU limit is too low for password hashing and AI reply handling.
 
 ### One-time setup
-1. In [Google Cloud Shell](https://shell.cloud.google.com), clone this repo and run:
+1. **Create the database** (from your machine, after `npx wrangler login`):
    ```bash
-   PROJECT_ID=your-project-id ./deploy/setup-gcp.sh
+   npx wrangler d1 create pofu
    ```
-   This enables the APIs and creates the Artifact Registry repo, the backup bucket, the service accounts, the secrets (`pofu-auth-secret`, `pofu-cron-secret`) and GitHub Workload Identity Federation, so no keys are stored in GitHub.
-2. Add the variables the script prints under GitHub → Settings → Secrets and variables → Actions → **Variables**. If the `gh` CLI is logged in, the script can set them for you. Set `SEED_DEMO=true` if you want the demo workspace on the first deploy.
-3. Push to `main` or re-run the workflow. The deployed URL appears in the workflow summary.
+   Put the printed `database_id` into `wrangler.jsonc` and commit it.
+2. **Connect the repo:** Cloudflare dashboard → Workers & Pages → Create → Import a repository → `IntalentAI/POFU`, then set:
+   - Build command: `npm ci && npm test && npx opennextjs-cloudflare build`
+   - Deploy command: `npx wrangler d1 migrations apply pofu --remote && npx opennextjs-cloudflare deploy`
+3. **Set the secrets** on the Worker:
+   ```bash
+   openssl rand -base64 48 | npx wrangler secret put AUTH_SECRET
+   npx wrangler secret put APP_URL        # e.g. https://pofu.<your-subdomain>.workers.dev
+   ```
+4. **Optional demo data:** `npm run db:seed && npm run db:seed:remote` loads the Acme demo workspace into production.
 
-### Optional settings (GitHub variables)
-- `EXTRA_SECRETS`: Secret Manager secrets to mount as env vars, for example `ANTHROPIC_API_KEY=pofu-anthropic-key:latest,SMTP_URL=pofu-smtp-url:latest`. Create each secret first and grant `pofu-runtime@…` the Secret Accessor role on it.
-- `EXTRA_ENV_VARS`: plain env vars, for example `EMAIL_FROM=Acme Joining <joining@acme.com>,TWILIO_WHATSAPP_FROM=whatsapp:+1…`.
-- `APP_URL`: set this once you map a custom domain.
-- `GCP_REGION` (default `us-central1`) and `CLOUD_RUN_SERVICE` (default `pofu`).
+You can also deploy by hand with `npm run deploy`, which runs the remote migrations, then builds and deploys.
+
+### Schema changes
+Edit `prisma/schema.prisma`, then generate the next D1 migration from the difference with your local database:
+```bash
+npm run db:diff > migrations/0002_describe_change.sql
+npm run db:migrate:local
+```
+Workers Builds applies new migrations to production on the next deploy.
 
 ### Things to know
-- **Deploys:** for a few seconds during a rollout the old and new versions run together. A write that lands on the old version in that window can be lost, so deploy at quiet times.
-- **Cost:** roughly the price of one always-on 1 vCPU / 1 GiB Cloud Run instance, plus negligible storage.
-- **Scaling up:** when you need more than one instance, move to Cloud SQL (Postgres). Prisma makes that a schema-provider change plus a fresh migration.
-- **Backups:** Litestream keeps 7 days of point-in-time history in the bucket. Restore locally with `litestream restore -o app.db gcs://BUCKET/app.db`.
+- **D1 has no multi-statement transactions.** Prisma runs nested writes (for example a journey together with its steps) as separate statements. The app is written so that this doesn't matter.
+- **Backups:** D1 Time Travel can restore the database to any minute in the last 30 days (`npx wrangler d1 time-travel restore pofu --timestamp=…`).
+- **Data location:** D1 places the database near where it is created. To keep candidate data in the EU, create the database with `--jurisdiction eu`.
 
 ## Integration API
 
@@ -111,17 +121,19 @@ Outbound webhook events (HMAC-SHA256 signature in `x-intalent-signature`): `cand
 src/lib/engine/   schedule (adaptive journey planner) · dispatcher (sends due engagements)
                   inbound (understand → act → reply) · readiness (explainable status) · actions
 src/lib/ai/       Claude interpreter (structured output) · rules fallback · shared schema
-src/lib/channels/ WhatsApp (Meta/Twilio) · SMS (Twilio) · email (SMTP) · simulated mode
+src/lib/channels/ WhatsApp (Meta/Twilio) · SMS (Twilio) · email (Resend) · simulated mode
 src/app/(app)/    recruiter app: Command Center, Candidates, Calendar, Analytics, Journeys, Settings
 src/app/j/        candidate joining page (mobile-first, no login, tokenised link)
 src/app/api/      integration API, cron tick, channel webhooks
+worker.ts         Worker entry: the Next.js app plus the Cron Trigger handler
+migrations/       D1 migrations (applied by wrangler)
 ```
 
-Stack: Next.js 15 (App Router, server actions), TypeScript, Tailwind CSS 4, Prisma, and the Anthropic SDK.
+Stack: Next.js 15 (App Router, server actions) on Cloudflare Workers via OpenNext, D1 with Prisma's D1 adapter, TypeScript, Tailwind CSS 4, and the Anthropic SDK.
 
 ## Scripts
 
-`npm run dev` · `npm run build` · `npm test` (engine unit tests) · `npm run typecheck` · `npm run lint` · `npm run db:seed`
+`npm run dev` · `npm run preview` (local Workers runtime) · `npm run deploy` · `npm test` (engine unit tests) · `npm run typecheck` · `npm run lint` · `npm run setup` · `npm run db:seed` · `npm run db:diff`
 
 ## Next (Phase 2 per brief)
 Candidate portal with documentation tracking, hiring-manager welcome videos, AI voice check-ins, native HRMS/HCM connectors, a voice command interface for recruiters, and multilingual journeys.

@@ -12,7 +12,7 @@ export async function POST(req: Request) {
   const type = req.headers.get("content-type") ?? "";
   let from = "", text = "", id: string | undefined;
   if (type.includes("application/json")) {
-    const b = await req.json();
+    const b = (await req.json()) as Record<string, string | undefined>;
     from = b.from ?? b.From ?? b.sender ?? "";
     text = b.text ?? b.TextBody ?? b["stripped-text"] ?? b.StrippedTextReply ?? "";
     id = b.messageId ?? b.MessageID;

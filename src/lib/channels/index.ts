@@ -1,5 +1,3 @@
-import nodemailer, { type Transporter } from "nodemailer";
-
 export type OutboundChannel = "whatsapp" | "email" | "sms" | "web";
 export type SendResult = { delivery: "sent" | "simulated" | "failed"; externalId?: string; error?: string };
 
@@ -34,18 +32,22 @@ export async function sendMessage(input: SendInput): Promise<SendResult> {
   }
 }
 
-let transport: Transporter | null = null;
 async function sendEmail({ to, subject, body, fromName }: SendInput): Promise<SendResult> {
   if (!to.email) return { delivery: "failed", error: "Candidate has no email address" };
-  if (!process.env.SMTP_URL) return { delivery: "simulated" };
-  transport ??= nodemailer.createTransport(process.env.SMTP_URL);
-  const info = await transport.sendMail({
-    from: process.env.EMAIL_FROM || `${fromName} <no-reply@intalent.ai>`,
-    to: to.email,
-    subject: subject || `A message from ${fromName}`,
-    text: body,
+  if (!process.env.RESEND_API_KEY) return { delivery: "simulated" };
+  const res = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, "content-type": "application/json" },
+    body: JSON.stringify({
+      from: process.env.EMAIL_FROM || `${fromName} <onboarding@resend.dev>`,
+      to: [to.email],
+      subject: subject || `A message from ${fromName}`,
+      text: body,
+    }),
   });
-  return { delivery: "sent", externalId: info.messageId };
+  const json = (await res.json()) as { id?: string; message?: string };
+  if (!res.ok) return { delivery: "failed", error: json.message || `Resend ${res.status}` };
+  return { delivery: "sent", externalId: json.id };
 }
 
 async function twilioSend(from: string, toAddr: string, body: string): Promise<SendResult> {
@@ -90,7 +92,7 @@ async function sendSms({ to, body }: SendInput): Promise<SendResult> {
 
 export function channelStatus() {
   return {
-    email: process.env.SMTP_URL ? "SMTP" : null,
+    email: process.env.RESEND_API_KEY ? "Resend" : null,
     whatsapp: process.env.WHATSAPP_CLOUD_TOKEN ? "Meta Cloud API" : process.env.TWILIO_WHATSAPP_FROM ? "Twilio" : null,
     sms: process.env.TWILIO_SMS_FROM ? "Twilio" : null,
     ai: process.env.ANTHROPIC_API_KEY ? process.env.ANTHROPIC_MODEL || "claude-opus-5-5" : null,

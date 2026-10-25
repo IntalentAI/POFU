@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
-/** Liveness/readiness probe for Cloud Run. */
+/** Health check: confirms the Worker can reach the D1 database. */
 export async function GET() {
   try {
     await db.$queryRaw`SELECT 1`;

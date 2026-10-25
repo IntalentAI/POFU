@@ -1,6 +1,10 @@
-// Demo workspace: `npm run db:seed`. Login: demo@acme.test / demo1234
+// Demo workspace. `npm run db:seed` loads it into the local D1 database and writes
+// .wrangler/seed.sql; `npm run db:seed:remote` loads that file into the production D1.
+// Login: demo@acme.test / demo1234
+import { mkdirSync, writeFileSync } from "node:fs";
 import bcrypt from "bcryptjs";
-import { db } from "@/lib/db";
+import { getPlatformProxy } from "wrangler";
+import { db, bindD1 } from "@/lib/db";
 import { addDays, atLocalHour, startOfDayUTC } from "@/lib/dates";
 import { PULSE_OPTIONS } from "@/lib/engine/default-campaign";
 import { planSchedule } from "@/lib/engine/schedule";
@@ -90,7 +94,47 @@ const SEEDS: Seed[] = [
   { first: "Fatima", last: "Zahra", position: "HR Generalist", dept: "People", location: "San Francisco HQ", manager: "Luis Ortega", accepted: -50, joining: -5, recruiter: 0, status: "joined" },
 ];
 
+// Rows belonging to the demo org, in foreign-key order, for the SQL export.
+const EXPORT: [table: string, where: string][] = [
+  ["Organization", `id = ?1`],
+  ["User", `orgId = ?1`],
+  ["Campaign", `orgId = ?1`],
+  ["CampaignStep", `campaignId IN (SELECT id FROM Campaign WHERE orgId = ?1)`],
+  ["KnowledgeItem", `orgId = ?1`],
+  ["Candidate", `orgId = ?1`],
+  ["ScheduledMessage", `candidateId IN (SELECT id FROM Candidate WHERE orgId = ?1)`],
+  ["Message", `candidateId IN (SELECT id FROM Candidate WHERE orgId = ?1)`],
+  ["Concern", `orgId = ?1`],
+  ["Event", `candidateId IN (SELECT id FROM Candidate WHERE orgId = ?1)`],
+];
+
+/** SQL that replaces the demo org in another D1 database with exactly these rows. */
+async function exportSql(d1: D1Database, orgId: string) {
+  const lines = [`DELETE FROM "Organization" WHERE slug = 'acme';`];
+  for (const [table, where] of EXPORT) {
+    const cols = (await d1.prepare(`SELECT name FROM pragma_table_info('${table}')`).all<{ name: string }>()).results.map((c) => c.name);
+    const quoted = cols.map((c) => `quote("${c}")`).join(" || ',' || ");
+    const rows = await d1.prepare(`SELECT ${quoted} AS v FROM "${table}" WHERE ${where}`).bind(orgId).all<{ v: string }>();
+    for (const r of rows.results) lines.push(`INSERT INTO "${table}" (${cols.map((c) => `"${c}"`).join(",")}) VALUES (${r.v});`);
+  }
+  return lines.join("\n") + "\n";
+}
+
 async function main() {
+  const proxy = await getPlatformProxy<CloudflareEnv>({ remoteBindings: false });
+  bindD1(proxy.env.DB);
+  try {
+    await seed();
+    const org = await db.organization.findUniqueOrThrow({ where: { slug: "acme" } });
+    mkdirSync(".wrangler", { recursive: true });
+    writeFileSync(".wrangler/seed.sql", await exportSql(proxy.env.DB, org.id));
+    console.log("Wrote .wrangler/seed.sql (load into production with `npm run db:seed:remote`)");
+  } finally {
+    await proxy.dispose();
+  }
+}
+
+async function seed() {
   await db.organization.deleteMany({ where: { slug: "acme" } });
   const org = await db.organization.create({
     data: { name: "Acme", slug: "acme", timezone: "America/Los_Angeles", companionName: "Alex" },
@@ -175,4 +219,4 @@ async function main() {
   console.log(`Seeded ${SEEDS.length} candidates. Login: demo@acme.test / demo1234`);
 }
 
-main().then(() => db.$disconnect()).catch(async (e) => { console.error(e); await db.$disconnect(); process.exit(1); });
+main().catch((e) => { console.error(e); process.exit(1); });

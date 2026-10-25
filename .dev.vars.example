@@ -1,0 +1,20 @@
+# Local secrets for `npm run dev` / `npm run preview`. Copy to .dev.vars.
+# In production set these with `npx wrangler secret put NAME` (or the Cloudflare dashboard).
+AUTH_SECRET="dev-only-change-me-please-32-chars-min"
+APP_URL="http://localhost:3000"
+
+# Optional — the app runs in demo mode (simulated messages, rules engine) without these.
+# CRON_SECRET=""              # only for calling /api/cron/tick from outside; Cron Triggers don't need it
+# ANTHROPIC_API_KEY=""
+# ANTHROPIC_MODEL="claude-opus-5-5"
+# RESEND_API_KEY=""
+# EMAIL_FROM="Acme Joining Team <joining@acme.com>"
+# INBOUND_EMAIL_SECRET=""
+# WHATSAPP_CLOUD_TOKEN=""
+# WHATSAPP_CLOUD_PHONE_ID=""
+# WHATSAPP_VERIFY_TOKEN=""
+# WHATSAPP_APP_SECRET=""
+# TWILIO_ACCOUNT_SID=""
+# TWILIO_AUTH_TOKEN=""
+# TWILIO_WHATSAPP_FROM="whatsapp:+14155238886"
+# TWILIO_SMS_FROM=""
