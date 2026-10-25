@@ -73,9 +73,10 @@ Requires the **Workers Paid** plan ($5/month); the free plan's 10 ms CPU limit i
 
 ### One-time setup
 1. **Database:** already created (`pofu`, primary location eastern North America) and referenced in `wrangler.jsonc`. To recreate it: `npx wrangler d1 create pofu --location enam`, then put the new `database_id` into `wrangler.jsonc`.
-2. **Connect the repo:** Cloudflare dashboard → Workers & Pages → Create → Import a repository → `IntalentAI/POFU`, then set:
-   - Build command: `npm ci && npm test && npx opennextjs-cloudflare build`
+2. **Connect the repo:** Cloudflare dashboard → Workers & Pages → Create → Import a repository → `IntalentAI/POFU`, then under the Worker's Settings → Build set:
+   - Build command: `npm test && npx opennextjs-cloudflare build` (Workers Builds runs `npm clean-install` first)
    - Deploy command: `npx wrangler d1 migrations apply pofu --remote && npx opennextjs-cloudflare deploy`
+   - Production branch: the branch that contains `wrangler.jsonc`.
 3. **Set the secrets** on the Worker:
    ```bash
    openssl rand -base64 48 | npx wrangler secret put AUTH_SECRET

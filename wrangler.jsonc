@@ -5,6 +5,8 @@
   "main": "worker.ts",
   "compatibility_date": "2026-10-19",
   "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  // Variables are managed in the Cloudflare dashboard; don't wipe them on deploy.
+  "keep_vars": true,
   "assets": {
     "directory": ".open-next/assets",
     "binding": "ASSETS"
