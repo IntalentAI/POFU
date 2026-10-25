@@ -72,11 +72,7 @@ Deployment uses **Cloudflare Workers Builds**: Cloudflare builds and deploys eve
 Requires the **Workers Paid** plan ($5/month); the free plan's 10 ms CPU limit is too low for password hashing and AI reply handling.
 
 ### One-time setup
-1. **Create the database** (from your machine, after `npx wrangler login`):
-   ```bash
-   npx wrangler d1 create pofu
-   ```
-   Put the printed `database_id` into `wrangler.jsonc` and commit it.
+1. **Database:** already created (`pofu`, primary location eastern North America) and referenced in `wrangler.jsonc`. To recreate it: `npx wrangler d1 create pofu --location enam`, then put the new `database_id` into `wrangler.jsonc`.
 2. **Connect the repo:** Cloudflare dashboard → Workers & Pages → Create → Import a repository → `IntalentAI/POFU`, then set:
    - Build command: `npm ci && npm test && npx opennextjs-cloudflare build`
    - Deploy command: `npx wrangler d1 migrations apply pofu --remote && npx opennextjs-cloudflare deploy`
@@ -100,7 +96,7 @@ Workers Builds applies new migrations to production on the next deploy.
 ### Things to know
 - **D1 has no multi-statement transactions.** Prisma runs nested writes (for example a journey together with its steps) as separate statements. The app is written so that this doesn't matter.
 - **Backups:** D1 Time Travel can restore the database to any minute in the last 30 days (`npx wrangler d1 time-travel restore pofu --timestamp=…`).
-- **Data location:** D1 places the database near where it is created. To keep candidate data in the EU, create the database with `--jurisdiction eu`.
+- **Data location:** the database's primary copy is in the US (eastern North America). Read replication is off, so data isn't copied to other regions.
 
 ## Integration API
 

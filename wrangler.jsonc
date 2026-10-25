@@ -13,8 +13,8 @@
     {
       "binding": "DB",
       "database_name": "pofu",
-      // Replace with the id printed by `npx wrangler d1 create pofu`.
-      "database_id": "00000000-0000-0000-0000-000000000000",
+      // Primary location: eastern North America (created with location hint "enam").
+      "database_id": "23f8e849-ba3d-4fa1-bd13-dc391c646022",
       "migrations_dir": "migrations"
     }
   ],
