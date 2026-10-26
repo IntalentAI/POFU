@@ -2,10 +2,16 @@
 // acceptance date, the joining date, or a fraction of the notice period, so the
 // same template adapts to a 7-day or a 90-day notice period.
 
+// message: plain message · pulse: joining-date confirmation with quick replies
+// arrival: Day-1 arrival check · welcome: delivers a hiring-manager welcome (skipped if none recorded)
+// docs: reminder listing outstanding checklist items (skipped if none) · voice: AI voice check-in call
+// (skipped without consent or a voice provider)
+export type StepKind = "message" | "pulse" | "arrival" | "welcome" | "docs" | "voice";
+
 export type StepTemplate = {
   key: string; name: string; objective: string;
   anchor: "after_acceptance" | "notice_percent" | "before_joining";
-  offset: number; kind: "message" | "pulse" | "arrival"; optional?: boolean;
+  offset: number; kind: StepKind; optional?: boolean;
   subject: string; body: string;
 };
 
@@ -15,6 +21,10 @@ export const PULSE_OPTIONS = [
   "3 - I have some questions",
   "4 - I'm reconsidering the offer",
 ];
+
+export const HM_WELCOME_BODY = "Hi {{firstName}}, {{hiringManager}} recorded a welcome message for you ahead of your first day. You can watch or read it on your joining page: {{portalLink}}";
+
+export const DOCUMENTATION_BODY = "Hi {{firstName}}, as your joining date gets closer, here's what HR needs from you. You can see each item and upload securely on your joining page: {{portalLink}}. Please don't send documents in this chat. Any trouble getting something together? Let me know.";
 
 export const DEFAULT_STEPS: StepTemplate[] = [
   {
@@ -48,22 +58,34 @@ export const DEFAULT_STEPS: StepTemplate[] = [
     body: "Hi {{firstName}}, you're about halfway to your first day at {{company}}. How are things progressing? Is {{joiningDate}} still your planned joining date? Reply with a number or in your own words:",
   },
   {
-    key: "hm_message", name: "Hiring manager message", objective: "Strengthen connection",
-    anchor: "notice_percent", offset: 65, kind: "message", optional: true,
-    subject: "A note from {{hiringManager}}",
-    body: "Hi {{firstName}}, {{hiringManager}} wanted to share that they're really looking forward to having you on the team in {{daysToJoin}} days. Anything you'd like to know before you start?",
+    key: "hm_message", name: "Hiring manager welcome", objective: "Strengthen connection",
+    anchor: "notice_percent", offset: 40, kind: "welcome", optional: true,
+    subject: "A welcome message from {{hiringManager}}",
+    body: HM_WELCOME_BODY,
   },
   {
     key: "documentation", name: "Documentation check", objective: "Ensure readiness",
     anchor: "before_joining", offset: 20, kind: "message",
     subject: "Getting your joining documents ready",
-    body: "Hi {{firstName}}, as your joining date gets closer, the HR team will ask for a few documents (ID, education and employment records, bank and tax details). Please use only the secure links the HR team sends — never share documents in this chat. Any trouble getting something together? Let me know.",
+    body: DOCUMENTATION_BODY,
+  },
+  {
+    key: "voice_checkin", name: "AI voice check-in", objective: "Hear how things are going",
+    anchor: "before_joining", offset: 12, kind: "voice", optional: true,
+    subject: "Voice check-in",
+    body: "Voice check-in call (only for candidates who agreed to calls).",
   },
   {
     key: "logistics", name: "Joining logistics", objective: "Resolve practical issues",
     anchor: "before_joining", offset: 14, kind: "message",
     subject: "Two weeks to go — logistics",
     body: "Hi {{firstName}}, two weeks to go! Is everything sorted for getting to {{location}} — travel, relocation or anything else? Let me know if anything is still open.",
+  },
+  {
+    key: "docs_reminder", name: "Documentation reminder", objective: "Close outstanding items",
+    anchor: "before_joining", offset: 10, kind: "docs",
+    subject: "A few items still to complete before {{joiningDate}}",
+    body: "Hi {{firstName}}, a quick reminder: these items are still open before your first day. You can upload them securely on your joining page: {{portalLink}}",
   },
   {
     key: "pulse_confirm", name: "Joining confirmation", objective: "Validate plans",

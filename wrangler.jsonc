@@ -20,7 +20,9 @@
       "migrations_dir": "migrations"
     }
   ],
-  "triggers": {
+  // Candidate documents and hiring-manager welcome recordings (private; served only via the app).
+  "r2_buckets": [{ "binding": "FILES", "bucket_name": "pofu-files" }],
+    "triggers": {
     // Every 5 minutes: send due engagements. Hourly at :07: full readiness re-evaluation.
     "crons": ["*/5 * * * *", "7 * * * *"]
   },

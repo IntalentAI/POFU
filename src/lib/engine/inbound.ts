@@ -18,7 +18,7 @@ import { evaluateReadiness } from "./readiness";
 export async function handleInboundMessage(candidateId: string, body: string, channel: OutboundChannel, externalId?: string) {
   const candidate = await db.candidate.findUniqueOrThrow({
     where: { id: candidateId },
-    include: { org: { include: { knowledge: true } }, recruiter: true },
+    include: { org: { include: { knowledge: true } }, recruiter: true, checklist: { orderBy: { position: "asc" } } },
   });
   const org = candidate.org;
   const now = new Date();
@@ -37,6 +37,13 @@ export async function handleInboundMessage(candidateId: string, body: string, ch
     company: org.name, companion: org.companionName,
     candidate: { ...candidate, recruiterName: candidate.recruiter?.name ?? null },
     knowledge: org.knowledge,
+    language: candidate.language,
+    details: {
+      firstDayTime: candidate.firstDayTime || org.firstDayTime,
+      firstDayAddress: candidate.firstDayAddress || org.firstDayAddress || candidate.location,
+      firstDayNotes: candidate.firstDayNotes || org.firstDayNotes,
+    },
+    checklist: candidate.checklist,
     history: history.reverse(),
     // Quick replies only make sense shortly after the prompt that offered them.
     lastPromptKind: lastPrompt?.sentAt && now.getTime() - lastPrompt.sentAt.getTime() < 14 * 86400_000 ? lastPrompt.kind : null,

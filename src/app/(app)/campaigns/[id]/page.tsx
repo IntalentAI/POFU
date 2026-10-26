@@ -32,6 +32,9 @@ function StepForm({ campaignId, step }: { campaignId: string; step?: CampaignSte
           <option value="message">Message</option>
           <option value="pulse">Commitment pulse (quick replies)</option>
           <option value="arrival">Day-1 arrival check</option>
+          <option value="welcome">Hiring manager welcome (skipped if none recorded)</option>
+          <option value="docs">Documentation reminder (skipped if nothing outstanding)</option>
+          <option value="voice">AI voice check-in (needs consent)</option>
         </select>
       </div>
       <label className="flex items-end gap-2 pb-2 text-xs text-zinc-600 sm:col-span-1"><input type="checkbox" name="optional" defaultChecked={step?.optional} /> Optional</label>
@@ -74,7 +77,7 @@ export default async function CampaignPage({ params }: { params: Promise<{ id: s
                   {s.anchor === "before_joining" && s.offset === 0 ? "Day 1" : `${s.offset}${s.anchor === "notice_percent" ? "%" : "d"} ${s.anchor === "after_acceptance" ? "after acceptance" : s.anchor === "notice_percent" ? "through notice" : "before joining"}`}
                 </span>
                 <span className="flex-1 font-medium">{s.name}</span>
-                {s.kind !== "message" && <span className="rounded bg-brand-50 px-1.5 text-[11px] text-brand-700">{s.kind === "pulse" ? "pulse" : "arrival"}</span>}
+                {s.kind !== "message" && <span className="rounded bg-brand-50 px-1.5 text-[11px] text-brand-700">{s.kind}</span>}
                 {s.optional && <span className="rounded bg-zinc-100 px-1.5 text-[11px] text-zinc-600">optional</span>}
                 <span className="w-full text-xs text-zinc-500 sm:w-auto">{s.objective}</span>
               </summary>

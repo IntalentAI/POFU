@@ -1,4 +1,4 @@
-import { claudeEnabled, interpretWithClaude } from "./claude";
+import { claudeEnabled, interpretWithClaude, translateWithClaude } from "./claude";
 import { interpretWithRules } from "./rules";
 import type { ConversationContext, Interpretation } from "./types";
 
@@ -14,4 +14,15 @@ export async function interpretMessage(text: string, ctx: ConversationContext): 
     }
   }
   return { ...interpretWithRules(text, ctx), engine: "rules" };
+}
+
+/** Journey messages in the candidate's language (needs Claude; otherwise sent in English). */
+export async function localize(text: string, language: string) {
+  if (!language || language === "en" || !claudeEnabled()) return text;
+  try {
+    return (await translateWithClaude(text, language)) ?? text;
+  } catch (err) {
+    console.error("[ai] translation failed, sending English:", (err as Error).message);
+    return text;
+  }
 }

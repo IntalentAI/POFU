@@ -8,6 +8,8 @@ import { emitWebhook } from "../webhooks";
 import { deliverToCandidate } from "./outbound";
 import { evaluateReadiness } from "./readiness";
 import { cancelSchedule, rebuildSchedule } from "./schedule";
+import { createCandidateChecklist, shiftChecklistDueDates } from "../checklist";
+import { requestWelcome } from "./welcome";
 
 export type EnrollInput = {
   firstName: string; lastName?: string; email?: string | null; phone?: string | null;
@@ -35,6 +37,8 @@ export async function enrollCandidate(org: Organization, input: EnrollInput, act
     },
   });
   await logEvent(candidate.id, "enrolled", `Offer accepted — enrolled via ${candidate.source}. Joining ${fmtDate(candidate.joiningDate)}.`, actor);
+  await createCandidateChecklist(candidate);
+  if (candidate.hiringManagerEmail) await requestWelcome(candidate, org, { actor });
   const plan = await rebuildSchedule(candidate, org);
   await evaluateReadiness(candidate.id);
   await emitWebhook(org.id, "candidate.enrolled", { candidateId: candidate.id, externalId: candidate.externalId, joiningDate: candidate.joiningDate, scheduledEngagements: plan.length });
@@ -46,6 +50,7 @@ export async function changeJoiningDate(candidate: Candidate, org: Organization,
   if (daysBetween(old, newDate) === 0) return candidate;
   const updated = await db.candidate.update({ where: { id: candidate.id }, data: { joiningDate: newDate } });
   await logEvent(candidate.id, "joining_date_changed", `Joining date changed from ${fmtDate(old)} to ${fmtDate(newDate)}${opts.reason ? ` — ${opts.reason}` : ""}`, opts.actor);
+  await shiftChecklistDueDates(candidate.id, old, newDate);
   await rebuildSchedule(updated, org);
   if (opts.notify) {
     await deliverToCandidate({

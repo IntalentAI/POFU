@@ -1,4 +1,4 @@
-export type OutboundChannel = "whatsapp" | "email" | "sms" | "web";
+export type OutboundChannel = "whatsapp" | "email" | "sms" | "web" | "voice"; // web/voice: recorded only (shown on the joining page / spoken on a call)
 export type SendResult = { delivery: "sent" | "simulated" | "failed"; externalId?: string; error?: string };
 
 type SendInput = {
@@ -95,6 +95,7 @@ export function channelStatus() {
     email: process.env.RESEND_API_KEY ? "Resend" : null,
     whatsapp: process.env.WHATSAPP_CLOUD_TOKEN ? "Meta Cloud API" : process.env.TWILIO_WHATSAPP_FROM ? "Twilio" : null,
     sms: process.env.TWILIO_SMS_FROM ? "Twilio" : null,
+    voice: process.env.TWILIO_VOICE_FROM && process.env.TWILIO_AUTH_TOKEN ? "Twilio Voice" : null,
     ai: process.env.ANTHROPIC_API_KEY ? process.env.ANTHROPIC_MODEL || "claude-opus-5-5" : null,
   };
 }

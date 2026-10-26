@@ -23,7 +23,11 @@ export type ConversationContext = {
   company: string;
   companion: string;
   candidate: { firstName: string; position: string; joiningDate: Date; location: string | null; hiringManagerName: string | null; recruiterName: string | null };
-  knowledge: { question: string; answer: string }[];
+  knowledge: { question: string; answer: string; category?: string }[];
+  language: string; // candidate's preferred language code, e.g. "en", "es"
+  // Confirmed, candidate-specific facts the companion may state (first day, checklist status).
+  details: { firstDayTime: string; firstDayAddress: string | null; firstDayNotes: string | null };
+  checklist: { title: string; status: string; required: boolean; dueDate: Date | null; category?: string; allowUpload?: boolean }[];
   history: { direction: string; author: string; body: string }[];
   lastPromptKind: string | null; // kind of the most recent scheduled engagement (pulse | arrival | message)
   now: Date;

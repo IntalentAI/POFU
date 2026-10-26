@@ -8,7 +8,13 @@ export async function getAnalytics(orgId: string, sinceDays = 180, now = new Dat
   const since = addDays(now, -sinceDays);
   const candidates = await db.candidate.findMany({
     where: { orgId, offerAcceptedAt: { gte: since } },
-    include: { recruiter: { select: { name: true } }, _count: { select: { messages: { where: { direction: "inbound" } } } } },
+    include: {
+      recruiter: { select: { name: true } },
+      _count: { select: { messages: { where: { direction: "inbound" } } } },
+      checklist: { where: { required: true }, select: { status: true } },
+      welcomes: { select: { status: true } },
+      calls: { select: { status: true } },
+    },
   });
   const concerns = await db.concern.findMany({ where: { orgId, createdAt: { gte: since } } });
 
@@ -67,8 +73,22 @@ export async function getAnalytics(orgId: string, sinceDays = 180, now = new Dat
     };
   });
 
+  // Phase 2 signals: documentation readiness, hiring-manager engagement, voice check-ins.
+  const withChecklist = pre.filter((c) => c.checklist.length);
+  const docsReady = withChecklist.filter((c) => c.checklist.every((i) => i.status === "verified" || i.status === "waived")).length;
+  const welcomeAsked = candidates.filter((c) => c.welcomes.length);
+  const welcomeGiven = welcomeAsked.filter((c) => c.welcomes.some((w) => w.status !== "requested")).length;
+  const calls = candidates.flatMap((c) => c.calls);
+  const joinedWithWelcome = joined.filter((c) => c.welcomes.some((w) => w.status === "delivered")).length;
+  const decidedWithWelcome = [...joined, ...dropped].filter((c) => c.welcomes.some((w) => w.status === "delivered")).length;
+
   return {
     sinceDays,
+    docsReadiness: withChecklist.length ? Math.round((docsReady / withChecklist.length) * 100) : null,
+    docsReadyCount: docsReady, docsTracked: withChecklist.length,
+    welcomeRate: welcomeAsked.length ? Math.round((welcomeGiven / welcomeAsked.length) * 100) : null,
+    welcomeConversion: decidedWithWelcome ? Math.round((joinedWithWelcome / decidedWithWelcome) * 100) : null,
+    voiceCalls: calls.length, voiceAnswered: calls.filter((c) => c.status === "completed").length,
     offersAccepted: candidates.length,
     expectedJoiners: pre.length,
     joined: joined.length,

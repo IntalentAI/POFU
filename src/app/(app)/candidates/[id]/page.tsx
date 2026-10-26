@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { CONCERN_CATEGORIES, DROPOUT_REASONS, OWNER_LABEL, type ConcernCategory } from "@/lib/constants";
+import { CONCERN_CATEGORIES, DROPOUT_REASONS, LANGUAGES, OWNER_LABEL, type ConcernCategory } from "@/lib/constants";
 import { daysBetween, fmtDate, fmtDateTime, fmtHour, isQuietHour, toDateInput } from "@/lib/dates";
 import { parseReasons } from "@/lib/engine/readiness";
 import { portalUrl } from "@/lib/engine/template";
@@ -14,6 +14,12 @@ import {
   sendRecruiterMessage, simulateCandidateReply, togglePause, updateCandidateDetails,
 } from "../../actions";
 import { Conversation } from "./conversation";
+import { ChecklistPanel, VoicePanel, WelcomePanel } from "./panels";
+import { voiceConfigured } from "@/lib/engine/voice";
+
+const STEP_KIND_LABEL: Record<string, string> = {
+  pulse: "commitment pulse", arrival: "arrival check", welcome: "manager welcome", docs: "only if items outstanding", voice: "voice call",
+};
 
 const STAGES = [
   { label: "Offer accepted", keys: [] as string[] },
@@ -35,6 +41,10 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
       concerns: { orderBy: { createdAt: "desc" } },
       scheduled: { orderBy: { scheduledFor: "asc" }, include: { step: true } },
       events: { orderBy: { createdAt: "desc" }, take: 40 },
+      checklist: { orderBy: { position: "asc" } },
+      documents: { orderBy: { createdAt: "desc" } },
+      welcomes: { orderBy: { requestedAt: "desc" } },
+      calls: { orderBy: { createdAt: "desc" }, take: 10 },
     },
   });
   if (!c) notFound();
@@ -126,6 +136,8 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
             simulateAction={simulateCandidateReply.bind(null, c.id)}
           />
 
+          <ChecklistPanel candidateId={c.id} items={c.checklist} documents={c.documents} active={active} readyAt={c.onboardingReadyAt} tz={tz} />
+
           <section className="card">
             <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-3">
               <h2 className="h2">Engagement schedule</h2>
@@ -135,7 +147,7 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
               {c.scheduled.filter((s) => s.status !== "cancelled").map((s) => (
                 <li key={s.id} className="flex items-center gap-3 px-5 py-2.5 text-sm">
                   <span className={`w-20 shrink-0 text-xs font-medium ${s.status === "sent" ? "text-emerald-600" : s.status === "scheduled" ? "text-brand-600" : s.status === "failed" ? "text-red-600" : "text-zinc-400"}`}>{s.status}</span>
-                  <span className="flex-1">{s.step?.name ?? s.stepKey}{s.kind !== "message" && <span className="ml-2 rounded bg-brand-50 px-1.5 text-[11px] text-brand-700">{s.kind === "pulse" ? "commitment pulse" : "arrival check"}</span>}
+                  <span className="flex-1">{s.step?.name ?? s.stepKey}{STEP_KIND_LABEL[s.kind] && <span className="ml-2 rounded bg-brand-50 px-1.5 text-[11px] text-brand-700">{STEP_KIND_LABEL[s.kind]}</span>}
                     {s.statusReason && s.status !== "sent" && <div className="text-xs text-zinc-400">{s.statusReason}</div>}
                     {pendingNote(s) && <div className="text-xs text-amber-700">{pendingNote(s)}</div>}
                   </span>
@@ -181,6 +193,14 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
                         <label className="flex items-center gap-2 text-xs text-zinc-600"><input type="checkbox" name="notify" defaultChecked /> Notify candidate</label>
                       </form>
                     )}
+                    {k.category === "unanswered_question" && (
+                      <form action={resolveConcernAction.bind(null, k.id)} className="mt-3 space-y-2 border-t border-zinc-200 pt-3">
+                        <label className="label">Answer {c.firstName}</label>
+                        <textarea name="answer" required rows={2} className="input" placeholder="Sent to the candidate on their channel" />
+                        <label className="flex items-center gap-2 text-xs text-zinc-600"><input type="checkbox" name="saveToKnowledge" defaultChecked /> Save to approved answers so the companion can answer this next time</label>
+                        <SubmitButton className="btn-primary w-full">Send answer & resolve</SubmitButton>
+                      </form>
+                    )}
                     <form action={resolveConcernAction.bind(null, k.id)} className="mt-2 flex gap-2">
                       <input name="resolution" placeholder="Resolution note" className="input py-1 text-xs" />
                       <SubmitButton className="btn-secondary shrink-0 py-1 text-xs">Resolve</SubmitButton>
@@ -214,6 +234,9 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
             </section>
           )}
 
+          <WelcomePanel candidateId={c.id} hiringManagerEmail={c.hiringManagerEmail} welcomes={c.welcomes} active={active} tz={tz} />
+          <VoicePanel candidateId={c.id} calls={c.calls} consentAt={c.voiceConsentAt} active={active} configured={voiceConfigured()} tz={tz} />
+
           <section className="card p-5">
             <h2 className="h2 mb-3">Commitment timeline</h2>
             {commitment.length === 0 ? <p className="muted">No confirmations or concerns yet.</p> : (
@@ -243,6 +266,14 @@ export default async function CandidatePage({ params }: { params: Promise<{ id: 
               <div><label className="label">Department</label><input name="department" defaultValue={c.department ?? ""} className="input" /></div>
               <div><label className="label">Location</label><input name="location" defaultValue={c.location ?? ""} className="input" /></div>
               <div><label className="label">Hiring manager</label><input name="hiringManagerName" defaultValue={c.hiringManagerName ?? ""} className="input" /></div>
+              <div><label className="label">Hiring manager email</label><input name="hiringManagerEmail" type="email" defaultValue={c.hiringManagerEmail ?? ""} className="input" /></div>
+              <div><label className="label">Language</label>
+                <select name="language" defaultValue={c.language} className="input">{Object.entries(LANGUAGES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select>
+              </div>
+              <div><label className="label">First-day time</label><input name="firstDayTime" defaultValue={c.firstDayTime ?? ""} placeholder={user.org.firstDayTime} className="input" /></div>
+              <div><label className="label">First-day address</label><input name="firstDayAddress" defaultValue={c.firstDayAddress ?? ""} placeholder={user.org.firstDayAddress ?? ""} className="input" /></div>
+              <div><label className="label">First-day notes</label><textarea name="firstDayNotes" rows={2} defaultValue={c.firstDayNotes ?? ""} placeholder={user.org.firstDayNotes ?? "What to bring, who to ask for"} className="input" /></div>
+              <label className="flex items-center gap-2 text-xs text-zinc-600"><input type="checkbox" name="voiceConsent" defaultChecked={Boolean(c.voiceConsentAt)} /> Candidate agreed to AI voice check-in calls</label>
               <div><label className="label">Recruiter</label>
                 <select name="recruiterId" defaultValue={c.recruiterId ?? ""} className="input">{recruiters.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}</select>
               </div>

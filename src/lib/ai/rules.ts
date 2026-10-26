@@ -11,7 +11,7 @@ const PATTERNS: [Cat, RegExp, string][] = [
   ["counteroffer", /\b(counter ?offer|asked me to stay|asking me to stay|wants? me to stay|retain me|retention)\b/i, "Current employer is trying to retain them (counteroffer / retention discussion)"],
   ["competing_offer", /\b(another offer|other offer|competing offer|different offer|offer from)\b/i, "Mentioned another offer"],
   ["salary", /\b(salary|compensation|pay|bonus|ctc|package|equity|stock)\b/i, "Asked about compensation"],
-  ["joining_date_change", /\b(change (my |the )?(joining|start) date|postpone|extend|extension|delay|push (it )?back|later (start|date)|join later|move (my )?(start|joining))\b/i, "Requested a joining-date change"],
+  ["joining_date_change", /\b(change (my |the )?(joining|start) date|postpone|extend|extension|delay|push (it )?back|push (my |the )?(start|joining) ?(date)?|later (start|date)|join later|move (my |the )?(start|joining))\b/i, "Requested a joining-date change"],
   ["relocation", /\b(relocat|accommodation|housing|visa|flight|move to|moving to|shifting to)\b/i, "Needs relocation / travel support"],
   ["documentation", /\b(document|certificate|payslip|pay slip|relieving letter|experience letter|background (check|verification)|id proof)\b/i, "Has a question or issue with documentation"],
   ["manager", /\b(manager)\b.*\b(concern|worried|unhappy|issue|problem)\b|\b(concern|worried|unhappy)\b.*\bmanager\b/i, "Raised a concern about the manager or team"],
@@ -108,6 +108,22 @@ export function interpretWithRules(text: string, ctx: ConversationContext): Inte
   }
 
   if (t.includes("?") || /^(what|when|where|how|who|can|do|is|will|should)\b/i.test(lower)) {
+    // Candidate-specific confirmed details first: document status and first-day logistics.
+    if (/\b(document|paperwork|upload|submit|outstanding|pending)\b/i.test(lower) && ctx.checklist.length) {
+      // Only what the candidate can act on (a vendor-run background check isn't theirs to submit).
+      const open = ctx.checklist.filter((i) => i.required && (i.status === "pending" || i.status === "rejected") && (i.allowUpload !== false || i.category !== "background"));
+      const reply = open.length
+        ? `You still have ${open.length} item${open.length === 1 ? "" : "s"} to complete: ${open.map((i) => i.title).join(", ")}. You can upload them securely under "Things to complete" on your joining page.`
+        : `You're all set on documents: nothing required is outstanding. HR will let you know if they need anything else.`;
+      return { ...base, intent: "question", answeredFromKnowledge: true, reply };
+    }
+    if (/\b(what time|when do i (start|arrive)|where do i (go|report)|address|arrive|report to|first day)\b/i.test(lower) && /\b(time|where|address|arrive|report)\b/i.test(lower)) {
+      const d = ctx.details;
+      return {
+        ...base, intent: "question", answeredFromKnowledge: true,
+        reply: `On ${joinStr}, please arrive at ${d.firstDayTime}${d.firstDayAddress ? ` at ${d.firstDayAddress}` : ""}.${d.firstDayNotes ? ` ${d.firstDayNotes}` : ""} Anything else I can help with, ${name}?`,
+      };
+    }
     const answer = findAnswer(t, ctx);
     if (answer) return { ...base, intent: "question", answeredFromKnowledge: true, reply: `${answer}\n\nAnything else I can help with, ${name}?` };
     return {

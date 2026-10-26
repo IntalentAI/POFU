@@ -10,7 +10,8 @@ import { PULSE_OPTIONS } from "@/lib/engine/default-campaign";
 import { planSchedule } from "@/lib/engine/schedule";
 import { render, templateVars } from "@/lib/engine/template";
 import { evaluateReadiness } from "@/lib/engine/readiness";
-import { createDefaultCampaign, DEFAULT_KNOWLEDGE } from "@/lib/onboarding";
+import { createDefaultCampaign, createDefaultChecklist, DEFAULT_KNOWLEDGE } from "@/lib/onboarding";
+import { createCandidateChecklist } from "@/lib/checklist";
 
 const now = new Date();
 const today = startOfDayUTC(now);
@@ -98,6 +99,7 @@ const SEEDS: Seed[] = [
 const EXPORT: [table: string, where: string][] = [
   ["Organization", `id = ?1`],
   ["User", `orgId = ?1`],
+  ["ChecklistTemplateItem", `orgId = ?1`],
   ["Campaign", `orgId = ?1`],
   ["CampaignStep", `campaignId IN (SELECT id FROM Campaign WHERE orgId = ?1)`],
   ["KnowledgeItem", `orgId = ?1`],
@@ -106,6 +108,9 @@ const EXPORT: [table: string, where: string][] = [
   ["Message", `candidateId IN (SELECT id FROM Candidate WHERE orgId = ?1)`],
   ["Concern", `orgId = ?1`],
   ["Event", `candidateId IN (SELECT id FROM Candidate WHERE orgId = ?1)`],
+  ["ChecklistItem", `candidateId IN (SELECT id FROM Candidate WHERE orgId = ?1)`],
+  ["WelcomeMessage", `candidateId IN (SELECT id FROM Candidate WHERE orgId = ?1)`],
+  ["VoiceCall", `candidateId IN (SELECT id FROM Candidate WHERE orgId = ?1)`],
 ];
 
 /** SQL that replaces the demo org in another D1 database with exactly these rows. */
@@ -137,7 +142,11 @@ async function main() {
 async function seed() {
   await db.organization.deleteMany({ where: { slug: "acme" } });
   const org = await db.organization.create({
-    data: { name: "Acme", slug: "acme", timezone: "America/Los_Angeles", companionName: "Alex" },
+    data: {
+      name: "Acme", slug: "acme", timezone: "America/Los_Angeles", companionName: "Alex",
+      firstDayTime: "9:00 AM", firstDayAddress: "Acme HQ, 500 Howard St, San Francisco (or your office location)",
+      firstDayNotes: "Bring a photo ID. Ask for the People team at reception: they'll walk you to your welcome session.",
+    },
   });
   const hash = await bcrypt.hash("demo1234", 10);
   const jordan = await db.user.create({ data: { orgId: org.id, email: "demo@acme.test", name: "Jordan Lee", role: "admin", passwordHash: hash } });
@@ -145,6 +154,7 @@ async function seed() {
   const recruiters = [jordan, sam];
   const campaign = await createDefaultCampaign(org.id);
   await db.knowledgeItem.createMany({ data: DEFAULT_KNOWLEDGE.map((k) => ({ ...k, orgId: org.id })) });
+  await createDefaultChecklist(org.id);
   const steps = await db.campaignStep.findMany({ where: { campaignId: campaign.id } });
 
   for (const s of SEEDS) {
@@ -154,7 +164,7 @@ async function seed() {
     const c = await db.candidate.create({
       data: {
         orgId: org.id, firstName: s.first, lastName: s.last, position: s.position, department: s.dept, location: s.location,
-        hiringManagerName: s.manager, recruiterId: recruiter.id, campaignId: campaign.id, source: s.recruiter ? "csv" : "intalent",
+        hiringManagerName: s.manager, hiringManagerEmail: `${s.manager.split(" ")[0].toLowerCase()}@acme.test`, recruiterId: recruiter.id, campaignId: campaign.id, source: s.recruiter ? "csv" : "intalent",
         email: `${s.first.toLowerCase()}.${s.last.toLowerCase().replace(/[^a-z]/g, "")}@example.com`,
         phone: s.channel === "email" ? null : `+1415555${String(1000 + SEEDS.indexOf(s)).slice(-4)}`,
         preferredChannel: s.channel ?? "whatsapp",
@@ -175,7 +185,11 @@ async function seed() {
       const at = step.key === "welcome" ? addDays(c.offerAcceptedAt, 0.01) : atLocalHour(day, org.sendHour, org.timezone);
       const past = at < now || (s.status && day <= joining);
       if (s.status && day > joining) continue;
-      if (past) {
+      if (past && (step.kind === "welcome" || step.kind === "voice" || step.kind === "docs")) {
+        // Conditional steps: don't invent a welcome, call or reminder that never happened.
+        const reason = step.kind === "welcome" ? "No welcome message recorded yet" : step.kind === "voice" ? "Candidate hasn't agreed to voice check-ins" : "Nothing outstanding";
+        await db.scheduledMessage.create({ data: { candidateId: c.id, stepId: step.id, stepKey: step.key, kind: step.kind, scheduledFor: at, status: "skipped", statusReason: reason } });
+      } else if (past) {
         let body = render(step.body, { ...vars, daysToJoin: String(Math.round((joining.getTime() - at.getTime()) / 86400000)) });
         if (step.kind === "pulse") body += "\n\n" + PULSE_OPTIONS.join("\n");
         const msg = await db.message.create({ data: { candidateId: c.id, direction: "outbound", channel: c.preferredChannel, author: "ai", authorName: org.companionName, subject: render(step.subject ?? "", vars), body, delivery: "simulated", createdAt: at } });
@@ -214,9 +228,65 @@ async function seed() {
       await db.event.create({ data: { candidateId: c.id, type: "status_changed", detail: s.status === "joined" ? "Joined — confirmed arrival on Day 1" : `Did not join — ${s.reason}`, actor: recruiter.name, createdAt: joining } });
     }
     await db.candidate.update({ where: { id: c.id }, data: { lastInboundAt: lastIn ?? (s.confirmedAgo !== undefined ? d(-s.confirmedAgo) : null), lastOutboundAt: lastOut } });
+    await seedPhase2(c, s, recruiter.name);
     if (!s.status) await evaluateReadiness(c.id, now);
   }
   console.log(`Seeded ${SEEDS.length} candidates. Login: demo@acme.test / demo1234`);
+}
+
+// Phase 2 demo data: checklists at realistic stages, hiring-manager welcomes, a voice check-in.
+async function seedPhase2(c: Awaited<ReturnType<typeof db.candidate.findUniqueOrThrow>>, s: Seed, recruiterName: string) {
+  await createCandidateChecklist(c);
+  const items = await db.checklistItem.findMany({ where: { candidateId: c.id }, orderBy: { position: "asc" } });
+  const set = async (title: string, status: string, extra: Record<string, unknown> = {}) => {
+    const it = items.find((i) => i.title === title);
+    if (it) await db.checklistItem.update({ where: { id: it.id }, data: { status, reviewedBy: status === "verified" ? recruiterName : null, reviewedAt: status === "verified" ? d(-3) : null, submittedAt: status === "pending" ? null : d(-5), ...extra } });
+  };
+  if (s.status === "joined") {
+    for (const it of items) await set(it.title, "verified");
+    await db.candidate.update({ where: { id: c.id }, data: { onboardingReadyAt: d(s.joining - 2) } });
+  } else if (!s.status) {
+    // Progress roughly follows how close the start date is.
+    const progress = s.joining <= 7 ? 5 : s.joining <= 20 ? 3 : s.joining <= 35 ? 1 : 0;
+    for (const it of items.slice(0, progress)) await set(it.title, "verified");
+    if (s.first === "Sarah") { // brief §3 example: "Two required documents remain outstanding"
+      await set("Employment verification", "pending"); await set("Bank details", "submitted");
+    }
+    if (s.first === "Grace") { await set("Bank details", "pending"); await set("Tax documentation", "rejected", { note: "The photo is blurry. Please upload a clearer copy." }); }
+    if (s.first === "Mei") await set("Joining forms", "submitted");
+    if (s.first === "Aisha") for (const it of items) await set(it.title, "verified");
+  }
+
+  // Hiring-manager welcomes
+  const author = { authorName: s.manager, authorEmail: `${s.manager.split(" ")[0].toLowerCase()}@acme.test` };
+  if (s.first === "Sarah" || s.first === "Aisha") {
+    await db.welcomeMessage.create({ data: { candidateId: c.id, ...author, kind: "text", status: "delivered", requestedAt: d(-20), receivedAt: d(-18), deliveredAt: d(-17),
+      text: s.first === "Sarah"
+        ? "Hi Sarah! Dana here. The whole platform team is excited you're joining. We've saved you a desk next to the people you'll be working with most, and I've blocked lunch on your first day so we can get to know each other. See you soon!"
+        : "Aisha, welcome! Can't wait to have your eye for detail on the design team. Your first project brief is ready and waiting for you. See you Wednesday!" } });
+  } else if (s.first === "Michael" || s.first === "Ben" || s.first === "Lena") {
+    await db.welcomeMessage.create({ data: { candidateId: c.id, ...author, status: "requested", requestedAt: d(-2) } });
+  }
+
+  // A completed voice check-in (brief §12 example).
+  if (s.first === "Priya") {
+    await db.candidate.update({ where: { id: c.id }, data: { voiceConsentAt: d(-12) } });
+    await db.voiceCall.create({ data: {
+      candidateId: c.id, provider: "simulator", status: "completed", outcome: "concerns", turns: 4, requestedBy: "system",
+      createdAt: d(-4), startedAt: d(-4), endedAt: d(-4),
+      transcript: JSON.stringify([
+        { speaker: "ai", text: "Hi Priya, this is Alex, an AI assistant calling on behalf of Acme about your joining. Is now a good time for a quick two-minute check-in?" },
+        { speaker: "candidate", text: "Yes, sure." },
+        { speaker: "ai", text: "Great. Is your joining date still on track?" },
+        { speaker: "candidate", text: "Yes, that's still the plan." },
+        { speaker: "ai", text: "Wonderful. Is everything sorted for getting to the Austin office, travel or relocation included?" },
+        { speaker: "candidate", text: "Mostly. I wanted to check whether relocation costs are reimbursed and if there's accommodation help for the first month." },
+        { speaker: "ai", text: "Thanks for asking. I don't have a confirmed answer, so I've asked Sam to get back to you. Anything else on your mind?" },
+        { speaker: "candidate", text: "No, that's all. Thanks!" },
+      ]),
+      summary: "Candidate: Priya Raman; Joining date confirmed. Candidate confirmed plans, requested clarification about relocation reimbursement and first-month accommodation, and reported no other concerns. Action: HR to share the relocation policy.",
+    } });
+  }
 }
 
 main().catch((e) => { console.error(e); process.exit(1); });

@@ -18,6 +18,18 @@ This repository implements the **MVP** from the product brief (§13):
 | Joining calendar | `/calendar` |
 | Basic joining analytics | `/analytics`: conversion, readiness, dropout reasons, and breakdowns by recruiter, department, location and source |
 
+**Phase 2** (brief §13) adds:
+
+| Capability | Where |
+|---|---|
+| AI knowledge-based Q&A | Answers from approved answers (now categorised) **and** the candidate's own confirmed details (first day, document status). Unanswered questions become "answer and teach" alerts: the recruiter's reply goes to the candidate and can be saved as an approved answer. |
+| Personalized candidate portal | `/j/:token`: journey, things to complete (secure uploads), first-day details, "Meet your team", AI companion chat, opt-in to check-in calls |
+| Documentation tracking | Settings → Documentation checklist (template) → per-candidate checklist; uploads to private R2 storage; verify / request re-upload / not required; readiness signal; reminders that list only what's outstanding |
+| Hiring manager engagement | Managers get an email link (no login) to record a video or voice note or write a welcome; it's delivered on the journey's welcome step, never invented; one automatic reminder |
+| AI voice check-ins | Consented calls via Twilio Voice (`src/lib/engine/voice.ts`): AI disclosure, decline / call later / ask for a person, same interpreter as messages, summary in the brief's format. Without Twilio, recruiters can run the identical flow in a simulator. |
+| HRMS/HCM integrations | Vendor-neutral onboarding handoff: `candidate.ready_for_onboarding` webhook and `GET /api/v1/candidates/:id/onboarding` with signed, expiring document links; `PATCH` accepts checklist updates (e.g. from a background-check vendor). |
+| Multilingual | Candidate language setting; with Claude, replies and journey messages are in the candidate's language. |
+
 ### Product guardrails (from the brief)
 - The AI never negotiates pay, approves date changes, makes commitments or pressures candidates. It acknowledges the request and escalates it, and the recruiter approves.
 - Answers come only from **employer-approved knowledge** (Settings → Approved answers). Unknown questions are escalated.
@@ -46,7 +58,7 @@ Without channel credentials, outbound messages are recorded as **simulated**, so
 
 ## Configuration
 
-The app runs on **Cloudflare Workers** with a **D1** (SQLite) database bound as `DB` (see `wrangler.jsonc`). Set values locally in `.dev.vars`; in production use `npx wrangler secret put NAME` or the Cloudflare dashboard (Worker → Settings → Variables and Secrets). No redeploy is needed after changing a secret.
+The app runs on **Cloudflare Workers** with a **D1** (SQLite) database bound as `DB` and a private **R2** bucket bound as `FILES` for candidate documents and welcome recordings (see `wrangler.jsonc`). Set values locally in `.dev.vars`; in production use `npx wrangler secret put NAME` or the Cloudflare dashboard (Worker → Settings → Variables and Secrets). No redeploy is needed after changing a secret.
 
 | Name | Purpose |
 |---|---|
@@ -57,6 +69,7 @@ The app runs on **Cloudflare Workers** with a **D1** (SQLite) database bound as 
 | `INBOUND_EMAIL_SECRET` | Shared secret for the inbound email webhook (`?secret=`). |
 | `WHATSAPP_CLOUD_TOKEN`, `WHATSAPP_CLOUD_PHONE_ID`, `WHATSAPP_VERIFY_TOKEN`, `WHATSAPP_APP_SECRET` | Meta WhatsApp Cloud API. |
 | `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_FROM`, `TWILIO_SMS_FROM` | Twilio WhatsApp / SMS. |
+| `TWILIO_VOICE_FROM` | Twilio number for AI voice check-in calls (with `TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN`). Without it, calls run in the in-app simulator. |
 | `CRON_SECRET` | Optional. Only needed to call `/api/cron/tick` from outside; Cron Triggers call it in-process. |
 
 **Inbound webhooks:** `/api/webhooks/whatsapp` (Meta), `/api/webhooks/twilio` (WhatsApp and SMS), `/api/webhooks/email` (Resend, SendGrid, Postmark or Mailgun inbound; JSON or form data).
@@ -85,6 +98,9 @@ Requires the **Workers Paid** plan ($5/month); the free plan's 10 ms CPU limit i
 4. **Optional demo data:** `npm run db:seed && npm run db:seed:remote` loads the Acme demo workspace into production.
 
 You can also deploy by hand with `npm run deploy`, which runs the remote migrations, then builds and deploys.
+
+### Migrations on D1
+D1 always enforces foreign keys, so a migration that rebuilds a table (`DROP TABLE` + recreate, which `prisma migrate diff` generates for some column changes) would **cascade-delete** related rows. Review every generated migration and keep it to `ALTER TABLE … ADD COLUMN` / `CREATE TABLE` (see `migrations/0002_phase2.sql`).
 
 ### Schema changes
 Edit `prisma/schema.prisma`, then generate the next D1 migration from the difference with your local database:
@@ -132,5 +148,5 @@ Stack: Next.js 15 (App Router, server actions) on Cloudflare Workers via OpenNex
 
 `npm run dev` · `npm run preview` (local Workers runtime) · `npm run deploy` · `npm test` (engine unit tests) · `npm run typecheck` · `npm run lint` · `npm run setup` · `npm run db:seed` · `npm run db:diff`
 
-## Next (Phase 2 per brief)
-Candidate portal with documentation tracking, hiring-manager welcome videos, AI voice check-ins, native HRMS/HCM connectors, a voice command interface for recruiters, and multilingual journeys.
+## Next (Phase 3 per brief)
+Joining confidence scoring and predictive dropout intelligence (once there is enough outcome data), engagement-effectiveness analysis (e.g. does a manager welcome raise conversion?), advanced enterprise analytics, and native connectors for specific HRIS/HCM vendors.

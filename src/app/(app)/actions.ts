@@ -15,6 +15,9 @@ import { evaluateReadiness } from "@/lib/engine/readiness";
 import { rebuildSchedule } from "@/lib/engine/schedule";
 import { logEvent } from "@/lib/events";
 import { parseCsv } from "@/lib/csv";
+import { checkOnboardingReady, createCandidateChecklist } from "@/lib/checklist";
+import { requestWelcome } from "@/lib/engine/welcome";
+import { finishCall, startVoiceCall, voiceTurn } from "@/lib/engine/voice";
 
 const str = (f: FormData, k: string) => String(f.get(k) ?? "").trim();
 
@@ -93,7 +96,11 @@ export async function updateCandidateDetails(id: string, f: FormData) {
     data: {
       email: str(f, "email") || null, phone: str(f, "phone") || null, preferredChannel: str(f, "preferredChannel") || candidate.preferredChannel,
       position: str(f, "position") || candidate.position, location: str(f, "location") || null, department: str(f, "department") || null,
-      hiringManagerName: str(f, "hiringManagerName") || null, recruiterId: str(f, "recruiterId") || candidate.recruiterId,
+      hiringManagerName: str(f, "hiringManagerName") || null, hiringManagerEmail: str(f, "hiringManagerEmail") || null,
+      recruiterId: str(f, "recruiterId") || candidate.recruiterId, language: str(f, "language") || candidate.language,
+      firstDayTime: str(f, "firstDayTime") || null, firstDayAddress: str(f, "firstDayAddress") || null, firstDayNotes: str(f, "firstDayNotes") || null,
+      // A recruiter can record consent the candidate gave verbally (e.g. on a call).
+      voiceConsentAt: f.get("voiceConsent") === "on" ? candidate.voiceConsentAt ?? new Date() : null,
     },
   });
   await logEvent(candidate.id, "updated", "Candidate details updated", user.name);
@@ -151,8 +158,109 @@ export async function resolveConcernAction(concernId: string, f: FormData) {
   const user = await requireUser();
   const concern = await db.concern.findFirst({ where: { id: concernId, orgId: user.orgId } });
   if (!concern) return;
-  await resolveConcern(concernId, str(f, "resolution"), user.name);
+  // Unanswered questions: answer the candidate directly and optionally teach the companion.
+  const answer = str(f, "answer");
+  if (answer) {
+    const candidate = await db.candidate.findUniqueOrThrow({ where: { id: concern.candidateId } });
+    await deliverToCandidate({ candidate, org: user.org, body: answer, author: "recruiter", authorName: user.name, subject: `An answer from ${user.name}` });
+    const question = /Asked: "(.*)"/.exec(concern.summary)?.[1] ?? str(f, "question");
+    if (f.get("saveToKnowledge") === "on" && question) {
+      await db.knowledgeItem.create({ data: { orgId: user.orgId, question, answer, category: str(f, "category") || "General" } });
+      await logEvent(candidate.id, "knowledge_added", `Added "${question.slice(0, 80)}" to approved answers`, user.name);
+    }
+  }
+  await resolveConcern(concernId, str(f, "resolution") || (answer ? "Answered by recruiter" : ""), user.name);
   refresh(concern.candidateId);
+}
+
+// ---- Documentation checklist ----
+
+export async function reviewChecklistItem(itemId: string, status: "verified" | "rejected" | "waived" | "pending", f?: FormData) {
+  const user = await requireUser();
+  const item = await db.checklistItem.findFirst({ where: { id: itemId, candidate: { orgId: user.orgId } }, include: { candidate: true } });
+  if (!item) return;
+  const note = f ? str(f, "note") : "";
+  await db.checklistItem.update({
+    where: { id: item.id },
+    data: { status, note: note || null, reviewedAt: status === "pending" ? null : new Date(), reviewedBy: status === "pending" ? null : user.name },
+  });
+  const verb = { verified: "Verified", rejected: "Asked for a new upload of", waived: "Marked not required:", pending: "Reopened" }[status];
+  await logEvent(item.candidateId, "document_reviewed", `${verb} ${item.title}${note ? ` (${note})` : ""}`, user.name);
+  if (status === "rejected" && item.candidate.status === "pre_joining") {
+    await deliverToCandidate({
+      candidate: item.candidate, org: user.org, author: "ai", subject: `${item.title}: please upload again`,
+      body: `Hi ${item.candidate.firstName}, your ${item.title.toLowerCase()} needs another look${note ? `: ${note}` : "."} Please upload a new copy on your joining page: ${(process.env.APP_URL || "").replace(/\/$/, "")}/j/${item.candidate.portalToken}`,
+    });
+  }
+  await checkOnboardingReady(item.candidateId);
+  await evaluateReadiness(item.candidateId);
+  refresh(item.candidateId);
+}
+
+export async function addChecklistItem(id: string, f: FormData) {
+  const { user, candidate } = await ownCandidate(id);
+  const title = str(f, "title");
+  if (!title) return;
+  const count = await db.checklistItem.count({ where: { candidateId: candidate.id } });
+  await db.checklistItem.create({
+    data: {
+      candidateId: candidate.id, title, description: str(f, "description") || null, required: f.get("required") === "on",
+      allowUpload: f.get("allowUpload") === "on", position: count, dueDate: parseDateOnly(str(f, "dueDate")) ?? null,
+    },
+  });
+  await logEvent(candidate.id, "checklist_updated", `Added checklist item: ${title}`, user.name);
+  await checkOnboardingReady(candidate.id);
+  await evaluateReadiness(candidate.id);
+  refresh(id);
+}
+
+export async function applyStandardChecklist(id: string) {
+  const { user, candidate } = await ownCandidate(id);
+  if (await db.checklistItem.count({ where: { candidateId: candidate.id } })) return;
+  await createCandidateChecklist(candidate);
+  await logEvent(candidate.id, "checklist_updated", "Applied the standard documentation checklist", user.name);
+  await evaluateReadiness(candidate.id);
+  refresh(id);
+}
+
+// ---- Hiring manager welcome & voice ----
+
+export async function requestWelcomeAction(id: string) {
+  const { user, org, candidate } = await ownCandidate(id);
+  const existing = await db.welcomeMessage.findFirst({ where: { candidateId: candidate.id, status: "requested" } });
+  await requestWelcome(candidate, org, { actor: user.name, reminder: Boolean(existing) });
+  refresh(id);
+}
+
+export async function startVoiceCallAction(id: string) {
+  const { user, candidate } = await ownCandidate(id);
+  const r = await startVoiceCall(candidate.id, user.name);
+  if (!r.ok) await logEvent(candidate.id, "voice_call", `Voice check-in not started: ${r.reason}`, user.name);
+  refresh(id);
+  if (r.simulated && r.callId) redirect(`/candidates/${id}/call/${r.callId}`);
+}
+
+async function ownSimulatedCall(callId: string) {
+  const user = await requireUser();
+  const call = await db.voiceCall.findFirst({ where: { id: callId, provider: "simulator", candidate: { orgId: user.orgId } } });
+  if (!call) throw new Error("Call not found");
+  return call;
+}
+
+/** Simulator: the recruiter types what the candidate would say on the call. */
+export async function simulateVoiceTurn(callId: string, f: FormData) {
+  const call = await ownSimulatedCall(callId);
+  if (call.endedAt) return;
+  await voiceTurn(callId, str(f, "speech"));
+  revalidatePath(`/candidates/${call.candidateId}/call/${callId}`);
+  refresh(call.candidateId);
+}
+
+export async function endSimulatedCall(callId: string) {
+  const call = await ownSimulatedCall(callId);
+  await finishCall(callId, "completed");
+  refresh(call.candidateId);
+  redirect(`/candidates/${call.candidateId}`);
 }
 
 export async function rebuildCandidateSchedule(id: string) {
@@ -227,8 +335,12 @@ export async function updateOrgSettings(f: FormData) {
     data: {
       name: str(f, "name") || user.org.name, companionName: str(f, "companionName") || user.org.companionName,
       defaultChannel: str(f, "defaultChannel") || user.org.defaultChannel, timezone,
-      quietHoursStart: int("quietHoursStart", user.org.quietHoursStart), quietHoursEnd: int("quietHoursEnd", user.org.quietHoursEnd),
+      // Quiet hours off = same start and end hour (never quiet).
+      quietHoursStart: f.get("quietHoursEnabled") === "on" ? int("quietHoursStart", 21) : 0,
+      quietHoursEnd: f.get("quietHoursEnabled") === "on" ? int("quietHoursEnd", 9) : 0,
       sendHour: int("sendHour", user.org.sendHour),
+      firstDayTime: str(f, "firstDayTime") || user.org.firstDayTime,
+      firstDayAddress: str(f, "firstDayAddress") || null, firstDayNotes: str(f, "firstDayNotes") || null,
     },
   });
   revalidatePath("/settings");
@@ -237,7 +349,7 @@ export async function updateOrgSettings(f: FormData) {
 export async function addKnowledge(f: FormData) {
   const user = await requireUser();
   if (!str(f, "question") || !str(f, "answer")) return;
-  await db.knowledgeItem.create({ data: { orgId: user.orgId, question: str(f, "question"), answer: str(f, "answer") } });
+  await db.knowledgeItem.create({ data: { orgId: user.orgId, question: str(f, "question"), answer: str(f, "answer"), category: str(f, "category") || "General" } });
   revalidatePath("/settings");
 }
 
@@ -285,5 +397,27 @@ export async function addWebhook(f: FormData) {
 export async function deleteWebhook(id: string) {
   const user = await requireUser();
   await db.webhook.deleteMany({ where: { id, orgId: user.orgId } });
+  revalidatePath("/settings");
+}
+
+export async function addChecklistTemplateItem(f: FormData) {
+  const user = await requireUser();
+  const title = str(f, "title");
+  if (!title) return;
+  const count = await db.checklistTemplateItem.count({ where: { orgId: user.orgId } });
+  const due = Number(str(f, "dueDaysBeforeJoining"));
+  await db.checklistTemplateItem.create({
+    data: {
+      orgId: user.orgId, title, description: str(f, "description") || null, category: str(f, "category") || "other",
+      required: f.get("required") === "on", allowUpload: f.get("allowUpload") === "on",
+      dueDaysBeforeJoining: Number.isFinite(due) && due >= 0 ? due : 7, position: count,
+    },
+  });
+  revalidatePath("/settings");
+}
+
+export async function deleteChecklistTemplateItem(id: string) {
+  const user = await requireUser();
+  await db.checklistTemplateItem.deleteMany({ where: { id, orgId: user.orgId } });
   revalidatePath("/settings");
 }

@@ -60,6 +60,14 @@ const ctx = (lastPromptKind: string | null = null): ConversationContext => ({
   company: "Acme", companion: "Alex",
   candidate: { firstName: "Sarah", position: "Engineer", joiningDate: parseDateOnly("2026-11-15")!, location: "SF", hiringManagerName: "Dana", recruiterName: "Jordan" },
   knowledge: [{ question: "Is there a dress code?", answer: "Smart casual." }],
+  language: "en",
+  details: { firstDayTime: "9:30 AM", firstDayAddress: "1 Market St, San Francisco", firstDayNotes: "Bring photo ID." },
+  checklist: [
+    { title: "Identity verification", status: "verified", required: true, dueDate: null },
+    { title: "Bank details", status: "pending", required: true, dueDate: null },
+    { title: "Tax documentation", status: "rejected", required: true, dueDate: null },
+    { title: "Background verification", status: "pending", required: true, dueDate: null, category: "background", allowUpload: false },
+  ],
   history: [], lastPromptKind, now: today,
 });
 
@@ -108,4 +116,35 @@ test("regular check-ins never crowd the welcome, the day before, or Day 1", () =
       for (const e of essential) assert.ok(Math.abs(x.day.getTime() - e.day.getTime()) >= 2 * 86400000, `${x.step.key} too close to ${e.step.key} (${n}-day notice)`);
     }
   }
+});
+
+test("rules: answers document status from the candidate's own checklist", () => {
+  const r = interpretWithRules("What documents do I still need to submit?", ctx());
+  assert.equal(r.answeredFromKnowledge, true);
+  assert.match(r.reply, /Bank details/);
+  assert.match(r.reply, /Tax documentation/);
+  assert.doesNotMatch(r.reply, /Identity verification/);
+  assert.doesNotMatch(r.reply, /Background verification/, "vendor-run check isn't the candidate's to submit");
+});
+
+test("rules: answers first-day logistics from confirmed details", () => {
+  const r = interpretWithRules("What time should I arrive on my first day?", ctx());
+  assert.match(r.reply, /9:30 AM/);
+  assert.match(r.reply, /1 Market St/);
+});
+
+test("journey: welcome, documentation reminder and voice steps are in the default plan", () => {
+  const p = plan(60);
+  assert.ok(p.includes("hm_message"), "hiring-manager welcome step planned (skipped at send time if nothing recorded)");
+  assert.ok(p.includes("docs_reminder"));
+  const kinds = new Map(steps.map((s) => [s.key, s.kind]));
+  assert.equal(kinds.get("hm_message"), "welcome");
+  assert.equal(kinds.get("docs_reminder"), "docs");
+  assert.equal(kinds.get("voice_checkin"), "voice");
+});
+
+test("rules: 'push my start date' is a date-change request", () => {
+  const r = interpretWithRules("My visa paperwork is delayed, I might need to push my start date by two weeks.", ctx());
+  assert.ok(r.concerns.some((c) => c.category === "joining_date_change"));
+  assert.equal(r.requestedJoiningDate, "2026-11-29");
 });

@@ -16,6 +16,7 @@ export async function evaluateReadiness(candidateId: string, now = new Date()) {
     where: { id: candidateId },
     include: {
       org: { select: { timezone: true } },
+      checklist: { where: { required: true } },
       concerns: { where: { status: "open" }, orderBy: { createdAt: "desc" } },
       scheduled: { where: { status: "sent", kind: { in: ["pulse", "message"] }, stepKey: { not: "welcome" } }, orderBy: { sentAt: "desc" }, take: 3 },
     },
@@ -33,6 +34,23 @@ export async function evaluateReadiness(candidateId: string, now = new Date()) {
   for (const concern of c.concerns) {
     reasons.push({ tone: concern.severity === "high" ? "danger" : "warning", text: concern.summary });
     raise(concern.severity === "high" ? "intervention_required" : "needs_attention");
+  }
+
+  // Documentation (operational risk): only a concern as joining approaches.
+  if (c.checklist.length) {
+    const rejected = c.checklist.filter((i) => i.status === "rejected").length;
+    const missing = c.checklist.filter((i) => i.status === "pending" || i.status === "rejected").length;
+    const awaitingReview = c.checklist.filter((i) => i.status === "submitted").length;
+    const overdue = c.checklist.some((i) => (i.status === "pending" || i.status === "rejected") && i.dueDate && i.dueDate < now);
+    if (missing === 0 && awaitingReview === 0) {
+      reasons.push({ tone: "positive", text: "All required documents verified" });
+    } else if (missing > 0 && (daysToJoin <= 14 || overdue)) {
+      reasons.push({ tone: "warning", text: `${missing} required document${missing === 1 ? "" : "s"} outstanding${overdue ? " (past due)" : ""}${rejected ? `, ${rejected} needing re-upload` : ""}` });
+      raise("needs_attention");
+    } else if (missing > 0) {
+      reasons.push({ tone: "info", text: `${missing} required document${missing === 1 ? "" : "s"} still to submit` });
+    }
+    if (awaitingReview > 0) reasons.push({ tone: "info", text: `${awaitingReview} document${awaitingReview === 1 ? "" : "s"} awaiting your review` });
   }
 
   if (c.lastConfirmedAt) {

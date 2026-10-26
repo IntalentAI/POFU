@@ -23,6 +23,10 @@ model Organization {
   quietHoursStart Int      @default(21) // local hour, messages are not sent from this hour...
   quietHoursEnd   Int      @default(9) // ...until this hour
   sendHour        Int      @default(10) // local hour scheduled engagements go out
+  // First-day defaults shown on the candidate portal (overridable per candidate).
+  firstDayTime    String   @default("9:00 AM")
+  firstDayAddress String?
+  firstDayNotes   String? // what to bring, who to ask for at reception, etc.
   createdAt       DateTime @default(now())
 
   users      User[]
@@ -30,6 +34,7 @@ model Organization {
   campaigns  Campaign[]
   concerns   Concern[]
   knowledge  KnowledgeItem[]
+  checklist  ChecklistTemplateItem[]
   apiKeys    ApiKey[]
   webhooks   Webhook[]
 }
@@ -79,6 +84,11 @@ model Candidate {
   lastInboundAt       DateTime?
   lastOutboundAt      DateTime?
   joinedAt            DateTime?
+  firstDayTime        String? // overrides the organization default
+  firstDayAddress     String?
+  firstDayNotes       String?
+  voiceConsentAt      DateTime? // candidate agreed to AI voice check-in calls
+  onboardingReadyAt   DateTime? // all required checklist items verified
   portalToken         String    @unique @default(cuid())
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
@@ -90,6 +100,10 @@ model Candidate {
   scheduled ScheduledMessage[]
   concerns  Concern[]
   events    Event[]
+  checklist ChecklistItem[]
+  documents Document[]
+  welcomes  WelcomeMessage[]
+  calls     VoiceCall[]
 
   @@unique([orgId, externalId])
   @@index([orgId, status, joiningDate])
@@ -212,6 +226,7 @@ model Event {
 model KnowledgeItem {
   id        String   @id @default(cuid())
   orgId     String
+  category  String   @default("General")
   question  String
   answer    String
   createdAt DateTime @default(now())
@@ -241,4 +256,105 @@ model Webhook {
   createdAt DateTime @default(now())
 
   org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2
+
+// Employer's standard pre-joining checklist; copied to each candidate on enrollment.
+model ChecklistTemplateItem {
+  id          String  @id @default(cuid())
+  orgId       String
+  title       String
+  description String?
+  category    String  @default("other") // identity | education | employment | bank | tax | background | forms | other
+  required    Boolean @default(true)
+  allowUpload Boolean @default(true) // candidate can upload a file on the portal
+  dueDaysBeforeJoining Int @default(7)
+  position    Int     @default(0)
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+}
+
+model ChecklistItem {
+  id          String    @id @default(cuid())
+  candidateId String
+  title       String
+  description String?
+  category    String    @default("other")
+  required    Boolean   @default(true)
+  allowUpload Boolean   @default(true)
+  dueDate     DateTime?
+  status      String    @default("pending") // pending | submitted | verified | rejected | waived
+  note        String? // reviewer's note, e.g. why it was rejected
+  submittedAt DateTime?
+  reviewedAt  DateTime?
+  reviewedBy  String?
+  position    Int       @default(0)
+  createdAt   DateTime  @default(now())
+
+  candidate Candidate  @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  documents Document[]
+
+  @@index([candidateId])
+}
+
+// File metadata; the bytes live in R2 (binding FILES) under `storageKey`.
+model Document {
+  id              String   @id @default(cuid())
+  candidateId     String
+  checklistItemId String?
+  storageKey      String   @unique
+  fileName        String
+  contentType     String
+  size            Int
+  uploadedBy      String   @default("candidate") // candidate | recruiter
+  createdAt       DateTime @default(now())
+
+  candidate     Candidate      @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  checklistItem ChecklistItem? @relation(fields: [checklistItemId], references: [id], onDelete: SetNull)
+}
+
+// A welcome from the hiring manager (or team): requested by email, recorded on a tokenized page.
+model WelcomeMessage {
+  id           String    @id @default(cuid())
+  candidateId  String
+  authorName   String
+  authorEmail  String?
+  authorRole   String    @default("Hiring manager")
+  kind         String? // text | video | audio (null until received)
+  text         String?
+  storageKey   String? // R2 key for video/audio
+  contentType  String?
+  status       String    @default("requested") // requested | received | delivered
+  token        String    @unique @default(cuid())
+  requestedAt  DateTime  @default(now())
+  remindedAt   DateTime?
+  receivedAt   DateTime?
+  deliveredAt  DateTime?
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@index([candidateId])
+}
+
+// An AI voice check-in call (Twilio Voice, or the in-app simulator).
+model VoiceCall {
+  id          String    @id @default(cuid())
+  candidateId String
+  provider    String    @default("twilio") // twilio | simulator
+  providerId  String? // Twilio CallSid
+  status      String    @default("queued") // queued | in_progress | completed | no_answer | failed | declined
+  turns       Int       @default(0)
+  transcript  String    @default("[]") // JSON [{speaker: "ai"|"candidate", text}]
+  summary     String?
+  outcome     String? // confirmed | concerns | declined | no_answer | callback
+  requestedBy String    @default("system")
+  createdAt   DateTime  @default(now())
+  startedAt   DateTime?
+  endedAt     DateTime?
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@index([candidateId])
 }

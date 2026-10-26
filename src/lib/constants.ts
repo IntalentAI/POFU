@@ -60,6 +60,13 @@ export const WEBHOOK_EVENTS = [
   "candidate.readiness_changed",
   "candidate.joining_date_changed",
   "candidate.status_changed",
+  "candidate.ready_for_onboarding",
   "concern.raised",
   "concern.resolved",
 ] as const;
+
+// Languages the companion can converse and send journeys in (Claude translates; the rules engine replies in English).
+export const LANGUAGES: Record<string, string> = {
+  en: "English", es: "Spanish", fr: "French", de: "German", pt: "Portuguese", it: "Italian", nl: "Dutch",
+  hi: "Hindi", ar: "Arabic", zh: "Chinese", ja: "Japanese", ko: "Korean", id: "Indonesian", tr: "Turkish", pl: "Polish",
+};

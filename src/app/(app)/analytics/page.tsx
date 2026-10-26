@@ -68,6 +68,10 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
         <StatCard label="Joining date changes" value={a.extensions} />
         <StatCard label="Candidate engagement" value={a.engagementRate === null ? "—" : `${a.engagementRate}%`} hint="replied at least once" />
         <StatCard label="Avg concern resolution" value={a.avgResolutionHours === null ? "—" : `${a.avgResolutionHours} h`} hint={`${a.openConcerns} open`} />
+        <StatCard label="Documentation readiness" value={a.docsReadiness === null ? "—" : `${a.docsReadiness}%`} hint={`${a.docsReadyCount} of ${a.docsTracked} expected joiners complete`} />
+        <StatCard label="Hiring manager welcomes" value={a.welcomeRate === null ? "—" : `${a.welcomeRate}%`} hint="of requests answered" />
+        <StatCard label="Conversion with a welcome" value={a.welcomeConversion === null ? "—" : `${a.welcomeConversion}%`} hint={`vs ${a.conversion ?? "—"}% overall (hypothesis to test)`} />
+        <StatCard label="Voice check-ins" value={a.voiceCalls} hint={`${a.voiceAnswered} answered`} />
       </div>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-3">
